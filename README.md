@@ -43,10 +43,14 @@ Where:
 * `https://github.com/kassambara/wordpress-docker-compose.git` - repo to pull and build (literally I picked just random
   one. Could be several repos)
 
+Check [usage section](#usage) for details.
+
 Wait a bit to finish building and go to
 
 * http://wordpress.wordpress-docker-compose.localhost:8080 - wordpress app
 * http://phpmyadmin.wordpress-docker-compose.localhost:8080 - for phpmyadmin app
+
+
 
 ## Supported OS
 
