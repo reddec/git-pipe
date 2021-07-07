@@ -21,7 +21,7 @@ git-pipe does for you:
 4. Restore [backup](#backup) (if applicable)
 5. Starts container(s)
 6. Creates [proxy router](#router)
-7. (optional) Registers [DNS](#dns)
+7. (optional) Registers [DNS](#supported-providers)
 8. (optional) Generates [TLS certificates](#run) by Let's Encrypt HTTP-01 ACME
 9. (background) Regularly creates [backup](#backup)
 10. Starts from (1) in case something changes in repo
