@@ -6,7 +6,7 @@ ssl/server.key ssl/server.crt:
 
 ssl: ssl/server.key ssl/server.crt
 
-build/git-pipe.1.gz: assemble-docs
+build/git-pipe.1.gz: README.md
 	mkdir -p build
 	pandoc README.md -s -t man -o build/git-pipe.1
 	gzip -f build/git-pipe.1
@@ -33,6 +33,8 @@ assemble-docs: build/git-pipe
 	stty rows 1024 cols 1024
 	build/git-pipe --help >> README.md || true
 	echo '\n```' >> README.md
+
+README.md: assemble-docs
 
 man: build/git-pipe.1.gz
 
