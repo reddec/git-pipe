@@ -38,6 +38,6 @@ jobs:
       uses: goreleaser/goreleaser-action@v2
       with:
         version: latest
-        args: release --rm-dist --release-footer _footer.md
+        args: release --rm-dist --release-footer _docs/01_install.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
