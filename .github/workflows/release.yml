@@ -1,0 +1,43 @@
+name: Build tools
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Go
+      uses: actions/setup-go@v1
+      with:
+        go-version: '^1.16'
+      id: go
+    - name: Install deps
+      run: sudo apt install -y python3 pandoc make
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+      with:
+        lfs: true
+        fetch-depth: 0
+    - name: Checkout LFS objects
+      run: git lfs checkout
+
+    - name: Pull tag
+      run: git fetch --tags
+    - name: Build doc
+      run: make man
+    - uses: azure/docker-login@v1
+      with:
+        username: 'reddec'
+        password: ${{ secrets.DOCKERIO_PASSWORD }}
+
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v2
+      with:
+        version: latest
+        args: release --rm-dist --release-footer _footer.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,12 @@
+Dockerfile*
+*.go
+Makefile
+/.idea
+/ssl
+/git-pipe
+/backups
+/repos
+/dist
+/build
+/_docs
+*.md

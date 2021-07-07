@@ -1,0 +1,87 @@
+project_name: git-pipe
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - 386
+      - arm
+      - arm64
+    goarm:
+      - 5
+      - 6
+      - 7
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+      - windows
+    main: ./cmd/git-pipe
+nfpms:
+  - file_name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    replacements:
+      Linux: linux
+    homepage: https://github.com/reddec/git-pipe
+    maintainer: Baryshnikov Aleksandr <owner@reddec.net>
+    description: Watch and run git repositories with docker or docker-compose setup
+    license: Mozilla Public License Version 2.0
+    contents:
+      - src: build/git-pipe.1.gz
+        dst: /usr/local/share/man/man1/git-pipe.1.gz
+    formats:
+      - deb
+    dependencies:
+      - git
+    recommends:
+      - openssl
+      - openssh-client
+    suggests:
+      - docker-compose
+      - docker.io
+dockers:
+  - dockerfile: Dockerfile
+    image_templates:
+      - "reddec/{{ .ProjectName }}:{{ .Tag }}"
+      - "reddec/{{ .ProjectName }}:v{{ .Major }}"
+      - "reddec/{{ .ProjectName }}:v{{ .Major }}.{{ .Minor }}"
+      - "reddec/{{ .ProjectName }}:latest"
+    build_flag_templates:
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+  - dockerfile: Dockerfile.light
+    image_templates:
+      - "reddec/{{ .ProjectName }}:{{ .Tag }}-light"
+      - "reddec/{{ .ProjectName }}:v{{ .Major }}-light"
+      - "reddec/{{ .ProjectName }}:v{{ .Major }}.{{ .Minor }}-light"
+      - "reddec/{{ .ProjectName }}:light"
+    build_flag_templates:
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+archives:
+  - files:
+      - LICENSE
+      - README.md
+    format: tar.gz
+    format_overrides:
+        - goos: windows
+          format: zip
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^doc:'
+      - '^test:'
+      - '^build:'

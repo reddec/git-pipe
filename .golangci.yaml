@@ -1,0 +1,21 @@
+run:
+  tests: false
+
+linters:
+  disable:
+    - lll
+    - godot
+    - gci
+    - wsl
+    - tagliatelle
+    - exhaustivestruct
+    - nakedret
+    - maligned
+    - gofumpt
+    - nlreturn
+    - cyclop
+    - wrapcheck
+  enable-all: true
+linters-settings:
+  funlen:
+    lines: 80

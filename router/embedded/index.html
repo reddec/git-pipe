@@ -1,0 +1,124 @@
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+<div class="items">
+    {{- range $groupName, $group := $.ByGroup}}
+    <div class="group">
+        <h2>{{$groupName}}</h2>
+        <div class="card-body">
+            {{- range $name, $services := $group.Services}}
+            <div class="card">
+                {{with $service := (index $services 0)}}
+                <img width="80em" height="80em"
+                     {{- if $.Config.PathRouting }}
+                     src="{{$service.Domain}}/favicon.ico"
+                     {{- else}}
+                     class="domain-href" data-host="{{$service.Domain}}" data-path="/favicon.ico" data-attr="src"
+                     src="//{{$service.Domain}}:{{$.Config.Port}}/favicon.ico"
+                     {{- end}}
+                     onerror="this.style.display='none'"
+                />
+                {{end}}
+                <div class="card-body">
+                    <h3>
+                        {{$name}}
+                    </h3>
+                    <div>
+                        {{- range $service := $services}}
+                        <div class="href">
+                            {{- if $.Config.PathRouting }}
+                            <a href="{{$service.Domain}}/">{{$service.Domain}}</a>
+                            {{- else}}
+                            <a class="domain-href" data-host="{{$service.Domain}}" data-path="" data-attr="href"
+                               href="//{{$service.Domain}}:{{$.Config.Port}}">{{$service.Domain}}</a>
+                            {{- end}}
+                        </div>
+                        {{- end}}
+                    </div>
+                </div>
+            </div>
+            {{- end}}
+        </div>
+    </div>
+    {{- end}}
+</div>
+</body>
+{{- if not $.Config.PathRouting }}
+<script>
+    let port = location.port;
+    document.querySelectorAll(".domain-href").forEach(function (element) {
+        let host = element.getAttribute("data-host");
+        let path = element.getAttribute("data-path");
+        let attr = element.getAttribute("data-attr");
+        let addr = host + (port ? (":" + port) : "") + path;
+        element.setAttribute(attr, "//" + addr)
+    })
+</script>
+{{- end}}
+<style>
+    body {
+        --main-color: #54ab9d;
+        --high-color: #AB5462;
+        --main-text-color: #ffffff;
+        --light-main-color: #54ab9d55;
+    }
+
+    .group {
+        max-width: 40em;
+        width: 100%;
+        display: flex;
+        flex-flow: column;
+        align-items: stretch;
+        color: var(--high-color);
+    }
+
+    .card {
+        color: black;
+        border-radius: 0.3em;
+        border: 0.03em solid #cccccc;
+        margin: 0.3em;
+        padding: 0.3em;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        background-color: var(--light-main-color);
+    }
+
+    a {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding: 0.3em;
+        border-radius: 0.5em;
+        background-color: var(--main-color);
+        color: var(--main-text-color);
+        text-decoration: none;
+    }
+
+    a:hover {
+        background-color: var(--high-color);
+    }
+
+    .card-body {
+        flex-grow: 1;
+        padding: 0.3em;
+    }
+
+    h2 {
+        margin-top: 0.1em;
+        margin-bottom: 0.1em;
+    }
+
+    .items {
+        display: flex;
+        flex-flow: column;
+        align-items: center;
+    }
+
+    .href {
+        padding: 0.3em;
+        display: inline-block;
+    }
+</style>
+</html>
