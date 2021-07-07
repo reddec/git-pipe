@@ -6,7 +6,7 @@ ssl/server.key ssl/server.crt:
 
 ssl: ssl/server.key ssl/server.crt
 
-build/git-pipe.1.gz: README.md
+build/git-pipe.1.gz:
 	mkdir -p build
 	pandoc README.md -s -t man -o build/git-pipe.1
 	gzip -f build/git-pipe.1
