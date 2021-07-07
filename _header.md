@@ -1,5 +1,8 @@
 # GIT-PIPE
 
+![logo](_docs/logo.png?raw=true)
+
+
 Hassle-free minimal CI/CD for git repos for docker-based projects.
 
 Features:

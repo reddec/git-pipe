@@ -1,5 +1,8 @@
 # GIT-PIPE
 
+![logo](_docs/logo.png?raw=true)
+
+
 Hassle-free minimal CI/CD for git repos for docker-based projects.
 
 Features:
@@ -454,10 +457,8 @@ Application Options:
   -D, --dummy                 Dummy mode disables HTTP router [$DUMMY]
   -b, --bind=                 Address to where bind HTTP server (default: 127.0.0.1:8080) [$BIND]
   -T, --auto-tls              Automatic TLS (Let's Encrypt), ignores bind address and uses 0.0.0.0:443 port [$AUTO_TLS]
-      --tls                   Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled.
-                              Ignored with --auto-tls' [$TLS]
-      --ssl-dir=              Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it
-                              is used as cache dir (default: ssl) [$SSL_DIR]
+      --tls                   Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled. Ignored with --auto-tls' [$TLS]
+      --ssl-dir=              Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it is used as cache dir (default: ssl) [$SSL_DIR]
       --no-index              Disable index page [$NO_INDEX]
   -n, --network=              Network name for internal communication (default: git-pipe) [$NETWORK]
   -i, --interval=             Interval to poll repositories (default: 30s) [$INTERVAL]
@@ -472,8 +473,7 @@ Application Options:
 
 Cloudflare config:
       --cloudflare.ip=        Public IP address for DNS record. If not defined - will be detected automatically by myexternalip.com [$CLOUDFLARE_IP]
-      --cloudflare.proxy      Let Cloudflare proxy traffic. Implies some level of protection and automatic SSL between client and Cloudflare
-                              [$CLOUDFLARE_PROXY]
+      --cloudflare.proxy      Let Cloudflare proxy traffic. Implies some level of protection and automatic SSL between client and Cloudflare [$CLOUDFLARE_PROXY]
       --cloudflare.api-token= API token [$CLOUDFLARE_API_TOKEN]
 
 Help Options:
