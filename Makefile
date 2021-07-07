@@ -30,6 +30,7 @@ assemble-docs: build/git-pipe
 	cat _header.md > README.md
 	find _docs -name '*.md' -type f | sort | xargs -n 1 cat | sed 's/^#/\n##/' >> README.md
 	echo '\n\n## Usage\n\n```' >> README.md
+	stty rows 1024 cols 1024
 	build/git-pipe --help >> README.md || true
 	echo '\n```' >> README.md
 
