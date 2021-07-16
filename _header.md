@@ -33,11 +33,11 @@ git-pipe does for you:
 
 For installation from binaries:
 
-    git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 Or for docker installation:
 
-    docker run -p 127.0.0.1:8080:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    docker run -p 127.0.0.1:8080:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 Where:
 
@@ -65,7 +65,9 @@ Wait a bit to finish building and go to
 
 * [ ] zero-deps: replace OpenSSL, git, ssh and docker-compose to Go-native variants
 * [ ] file config: support file-based per repo configurations
-* [ ] authorization: by JWT/by token/by external oauth for requests for the embedded router
+* [ ] authorization: 
+  *  [x] by JWT 
+  *  [ ] OIDC
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
 * [ ] lazy initialization

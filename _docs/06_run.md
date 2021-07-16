@@ -8,15 +8,15 @@ See [usage](#usage) for a list of all available flags.
 
 **Localhost example:**
 
-    git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 **Expose to the public:**
 
-    git-pipe -b 0.0.0.0:8080 https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run -b 0.0.0.0:8080 https://github.com/kassambara/wordpress-docker-compose.git
 
 **Public and with Let's Encrypt certificates:**
 
-    git-pipe --auto-tls https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run --auto-tls https://github.com/kassambara/wordpress-docker-compose.git
 
 `--auto-tls` implies binding to `0.0.0.0:443` and automatic certificates by HTTP-01 ACME protocol.
 
@@ -36,7 +36,7 @@ Version:
 
 **Basic**
 
-`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe <flags same as for bin>`
+`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run <flags same as for bin>`
 
 **Expose to the public with TLS**
 
@@ -44,19 +44,19 @@ It's better to have **wildcard** certificate.
 
 In `./certs` should be file `server.key` and `server.crt`.
 
-`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/certs:/app/ssl reddec/git-pipe --tls <flags same as for bin>`
+`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/certs:/app/ssl reddec/git-pipe run --tls <flags same as for bin>`
 
 **Automatic TLS**
 
 Uses Let's Encrypt ACME HTTP-01 protocol.
 
-`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe --auto-tls <flags same as for bin>`
+`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run --auto-tls <flags same as for bin>`
 
 **Private repos**
 
 Feel free to mount SSH socket:
 
-`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent reddec/git-pipe ...`
+`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent reddec/git-pipe run ...`
 
 By default, SSH will be used without strict host checking. To harden pulling you may mount your own config
 to `/root/.ssh/config`.

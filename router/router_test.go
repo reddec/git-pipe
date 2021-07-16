@@ -6,9 +6,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/reddec/git-pipe/packs"
 	"github.com/reddec/git-pipe/router"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRouter_ServeHTTP(t *testing.T) {
@@ -141,4 +143,125 @@ func TestRandom(t *testing.T) {
 	rt.ServeHTTP(rr, rq)
 	assert.True(t, routed.Load().(bool))
 	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestJWT(t *testing.T) {
+	t.Run("valid token should work", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"aud": "client1"}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		rt := router.New(router.Config{})
+
+		rt.Update("test", []packs.Service{
+			{
+				Group:  "my-repo",
+				Name:   "app",
+				Domain: "app.example.com",
+			},
+		})
+		rt.Handle(router.JWT("qwerty"))
+		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			assert.Equal(t, "client1", request.Header.Get(router.HeaderUser))
+			return nil
+		}))
+
+		t.Run("token in header", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("token in query", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z?token="+token, nil)
+			rt.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+
+	})
+
+	t.Run("restrict domain", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"aud": "client1",
+			"sub": "my-repo",
+		}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		rt := router.New(router.Config{})
+
+		rt.Update("test", []packs.Service{
+			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
+			{Group: "my-repo-2", Name: "app2", Domain: "app2.example.com"},
+		})
+		rt.Handle(router.JWT("qwerty"))
+		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			return nil
+		}))
+
+		t.Run("ok with allowed", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("no-no for another", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app2.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.ServeHTTP(rr, rq)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+		})
+	})
+
+	t.Run("restrict method", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"aud":     "client1",
+			"methods": []string{"POST"},
+		}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		rt := router.New(router.Config{})
+
+		rt.Update("test", []packs.Service{
+			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
+		})
+		rt.Handle(router.JWT("qwerty"))
+		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			return nil
+		}))
+
+		t.Run("ok with POST", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodPost, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("no-no for another", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.ServeHTTP(rr, rq)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+		})
+	})
 }
