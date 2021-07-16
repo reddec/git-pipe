@@ -33,11 +33,11 @@ git-pipe does for you:
 
 For installation from binaries:
 
-    git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 Or for docker installation:
 
-    docker run -p 127.0.0.1:8080:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    docker run -p 127.0.0.1:8080:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 Where:
 
@@ -65,11 +65,13 @@ Wait a bit to finish building and go to
 
 * [ ] zero-deps: replace OpenSSL, git, ssh and docker-compose to Go-native variants
 * [ ] file config: support file-based per repo configurations
-* [ ] authorization: by JWT/by token/by external oauth for requests for the embedded router
+* [ ] authorization: 
+  *  [x] by JWT 
+  *  [ ] OIDC
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
-
-
+* [ ] lazy initialization
+* [x] path routing as alternative to domain-based
 ## Installation
 
 
@@ -283,15 +285,15 @@ See [usage](#usage) for a list of all available flags.
 
 **Localhost example:**
 
-    git-pipe https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run https://github.com/kassambara/wordpress-docker-compose.git
 
 **Expose to the public:**
 
-    git-pipe -b 0.0.0.0:8080 https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run -b 0.0.0.0:8080 https://github.com/kassambara/wordpress-docker-compose.git
 
 **Public and with Let's Encrypt certificates:**
 
-    git-pipe --auto-tls https://github.com/kassambara/wordpress-docker-compose.git
+    git-pipe run --auto-tls https://github.com/kassambara/wordpress-docker-compose.git
 
 `--auto-tls` implies binding to `0.0.0.0:443` and automatic certificates by HTTP-01 ACME protocol.
 
@@ -312,7 +314,7 @@ Version:
 
 **Basic**
 
-`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe <flags same as for bin>`
+`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run <flags same as for bin>`
 
 **Expose to the public with TLS**
 
@@ -320,19 +322,19 @@ It's better to have **wildcard** certificate.
 
 In `./certs` should be file `server.key` and `server.crt`.
 
-`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/certs:/app/ssl reddec/git-pipe --tls <flags same as for bin>`
+`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/certs:/app/ssl reddec/git-pipe run --tls <flags same as for bin>`
 
 **Automatic TLS**
 
 Uses Let's Encrypt ACME HTTP-01 protocol.
 
-`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe --auto-tls <flags same as for bin>`
+`docker run -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock reddec/git-pipe run --auto-tls <flags same as for bin>`
 
 **Private repos**
 
 Feel free to mount SSH socket:
 
-`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent reddec/git-pipe ...`
+`docker run -p 80:80 -v /var/run/docker.sock:/var/run/docker.sock -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent reddec/git-pipe run ...`
 
 By default, SSH will be used without strict host checking. To harden pulling you may mount your own config
 to `/root/.ssh/config`.
@@ -399,7 +401,23 @@ services:
 
 Router (proxy) provides reverse-proxy concept.
 
-`-D, --dummy, $DUMMY` disables router completely. Could be useful for services deployed without HTTP services.# DNS
+`-D, --dummy, $DUMMY` disables router completely. Could be useful for services deployed without HTTP services.
+
+
+### Domain routing
+
+By-default, each repo and service deployed as separated domain. Root domain can be defined in `-d,--domain,$DOMAIN`.
+
+
+### Path routing
+
+In case multiple domains is not an option the path-based routing can be useful. Enabled by
+flag `-P,--path-routing,$PATH_ROUTING` which means that services will be under the same domain, but under different path
+prefixes. In this mode, `--domain` flag will not be used for services name,
+however, it still required for automatic TLS. 
+
+
+## DNS
 
 git-pipe uses domain-based routing system which means that all exposed deployed containers will be externally accessible
 by unique domain.
@@ -440,47 +458,150 @@ Options:
 * `--cloudflare.proxy` (`$CLOUDFLARE_PROXY`) - Let Cloudflare proxy traffic. Implies some level of protection and
   automatic SSL between client and Cloudflare
 * `--cloudflare.api-token <TOKEN>` (`$CLOUDFLARE_API_TOKEN`) -
-  [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens)
+  [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens)# Authorization
+
+It's possible to secure exposed endpoints by JWT.
+
+**Important:** index endpoint not secured by authorization, however, it can expose only list of deployed applications.
+Use `--no-index` flag to disable index page.
+
+Supported claims:
+
+* `nbf` - not before
+* `exp` - expiration time. Permanent if not defined
+* `sub` - restrict to single group (repo) by name (or FQDN if `--fqdn` set)
+* `aud` - (required) client name (will be used for statistics and probably for lock)
+* `methods` - list of allowed methods: GET, POST, etc.. Case-insensitive, all methods allowed if list is empty or
+  undefined.
+
+To enable JWT authorization use `--jwt <key>` flag, where `<key>` shared key used for signing tokens.
+
+Tokens can be (sorted by priority):
+
+* in header `Authorization` with `Bearer` (case-insensitive) kind
+* in query param `token`
+
+
+**For example** you have token `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJjbGllbnQxIn0.tj2xpg4u-IHzqXtjfpmI8QUFKQIQUrxPdCQY4JSfCWI`
+ so cURL requests may be:
+
+* in header: `curl -H 'Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJjbGllbnQxIn0.tj2xpg4u-IHzqXtjfpmI8QUFKQIQUrxPdCQY4JSfCWI' http://app.example.com/`
+* in query: `curl http://app.example.com/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJjbGllbnQxIn0.tj2xpg4u-IHzqXtjfpmI8QUFKQIQUrxPdCQY4JSfCWI`
+
+
+### Generate tokens
+
+Check `git-pipe jwt` command in [usage](#usage).
+
+Example:
+
+    git-pipe jwt -s changeme my-client-1
+
+will generate and print token labeled as `my-client-1` without expiration, for all groups (repos), for all methods,
+assuming that shared key is `changeme`.
+
+Example with restriction to single group (repo):
+
+    git-pipe jwt -s changeme -g my-app my-client-1
+
+Example with restriction to single group (repo) and only for GET and HEAD methods:
+
+    git-pipe jwt -s changeme -g my-app -m GET -m HEAD my-client-1
+
+Example with expiration after 3 hours 20 minutes and 5 seconds:
+
+    git-pipe jwt -s changeme -e 3h20m5s my-client-1
+
+Example how to generate for multiple same clients:
+
+    git-pipe jwt -s changeme my-client-1 my-client-2 my-client-3 my-client-4
 
 ## Usage
 
+
+* `jwt` - helper to generate JWT
+* `run` - (default) run git-pipe and serve repos
+
+## jwt
 ```
 Usage:
-  git-pipe [OPTIONS] [git-url...]
-
-Watch and deploy docker-based applications from Git
-Author: Baryshnikov Aleksandr <dev@baryshnikov.net>
-Version: dev
-
-Application Options:
-  -d, --domain=               Root domain, default is hostname (default: localhost) [$DOMAIN]
-  -D, --dummy                 Dummy mode disables HTTP router [$DUMMY]
-  -b, --bind=                 Address to where bind HTTP server (default: 127.0.0.1:8080) [$BIND]
-  -T, --auto-tls              Automatic TLS (Let's Encrypt), ignores bind address and uses 0.0.0.0:443 port [$AUTO_TLS]
-      --tls                   Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled. Ignored with --auto-tls' [$TLS]
-      --ssl-dir=              Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it is used as cache dir (default: ssl) [$SSL_DIR]
-      --no-index              Disable index page [$NO_INDEX]
-  -n, --network=              Network name for internal communication (default: git-pipe) [$NETWORK]
-  -i, --interval=             Interval to poll repositories (default: 30s) [$INTERVAL]
-  -o, --output=               Output directory for clone (default: repos) [$OUTPUT]
-  -B, --backup=               Backup location (default: file://backups) [$BACKUP]
-  -K, --backup-key=           Backup key (default: git-pipe-change-me) [$BACKUP_KEY]
-  -I, --backup-interval=      Backup interval (default: 1h) [$BACKUP_INTERVAL]
-  -F, --fqdn                  Construct from URL unique FQDN based on path and domain [$FQDN]
-      --graceful-shutdown=    Interval before server shutdown (default: 15s) [$GRACEFUL_SHUTDOWN]
-  -e, --env-file=             Environment variables files [$ENV_FILE]
-  -p, --provider=[cloudflare] DNS provider for auto registration [$PROVIDER]
-
-Cloudflare config:
-      --cloudflare.ip=        Public IP address for DNS record. If not defined - will be detected automatically by myexternalip.com [$CLOUDFLARE_IP]
-      --cloudflare.proxy      Let Cloudflare proxy traffic. Implies some level of protection and automatic SSL between client and Cloudflare [$CLOUDFLARE_PROXY]
-      --cloudflare.api-token= API token [$CLOUDFLARE_API_TOKEN]
+  git-pipe [OPTIONS] jwt [jwt-OPTIONS] [name...]
 
 Help Options:
-  -h, --help                  Show this help message
+  -h, --help            Show this help message
 
-Arguments:
-  git-url:                    remote git URL to poll with optional branch/tag name after hash
+[jwt command options]
+      -s, --secret=     Shared JWT secret [$SECRET]
+      -g, --group=      Allowed group (repo name) [$GROUP]
+      -e, --expiration= Expiration time [$EXPIRATION]
+      -m, --methods=    Allowed HTTP methods [$METHODS]
 
+[jwt command arguments]
+  name:                 Client names for each token will be generated
 
 ```
+
+
+## run
+```
+Usage:
+  git-pipe [OPTIONS] run [run-OPTIONS] [git-url...]
+
+Help Options:
+  -h, --help                      Show this help message
+
+[run command options]
+      -d, --domain=               Root domain, default is hostname (default:
+                                  localhost) [$DOMAIN]
+      -D, --dummy                 Dummy mode disables HTTP router [$DUMMY]
+      -b, --bind=                 Address to where bind HTTP server (default:
+                                  127.0.0.1:8080) [$BIND]
+      -T, --auto-tls              Automatic TLS (Let's Encrypt), ignores bind
+                                  address and uses 0.0.0.0:443 port [$AUTO_TLS]
+          --tls                   Enable HTTPS serving with TLS. TLS files
+                                  should support multiple domains, otherwise
+                                  path-routing should be enabled. Ignored with
+                                  --auto-tls' [$TLS]
+          --ssl-dir=              Directory for SSL certificates and keys.
+                                  Should contain server.{crt,key} files unless
+                                  auto-tls enabled. For auto-tls it is used as
+                                  cache dir (default: ssl) [$SSL_DIR]
+          --no-index              Disable index page [$NO_INDEX]
+      -P, --path-routing          Enable path routing instead of domain-based.
+                                  Implicitly disables --domain [$PATH_ROUTING]
+          --jwt=                  Define JWT secret and enable JWT-based
+                                  authorization [$JWT]
+      -n, --network=              Network name for internal communication
+                                  (default: git-pipe) [$NETWORK]
+      -i, --interval=             Interval to poll repositories (default: 30s)
+                                  [$INTERVAL]
+      -o, --output=               Output directory for clone (default: repos)
+                                  [$OUTPUT]
+      -B, --backup=               Backup location (default: file://backups)
+                                  [$BACKUP]
+      -K, --backup-key=           Backup key (default: git-pipe-change-me)
+                                  [$BACKUP_KEY]
+      -I, --backup-interval=      Backup interval (default: 1h)
+                                  [$BACKUP_INTERVAL]
+      -F, --fqdn                  Construct from URL unique FQDN based on path
+                                  and domain [$FQDN]
+          --graceful-shutdown=    Interval before server shutdown (default:
+                                  15s) [$GRACEFUL_SHUTDOWN]
+      -e, --env-file=             Environment variables files [$ENV_FILE]
+      -p, --provider=[cloudflare] DNS provider for auto registration [$PROVIDER]
+
+    Cloudflare config:
+          --cloudflare.ip=        Public IP address for DNS record. If not
+                                  defined - will be detected automatically by
+                                  myexternalip.com [$CLOUDFLARE_IP]
+          --cloudflare.proxy      Let Cloudflare proxy traffic. Implies some
+                                  level of protection and automatic SSL between
+                                  client and Cloudflare [$CLOUDFLARE_PROXY]
+          --cloudflare.api-token= API token [$CLOUDFLARE_API_TOKEN]
+
+[run command arguments]
+  git-url:                        remote git URL to poll with optional
+                                  branch/tag name after hash
+
+```
+
