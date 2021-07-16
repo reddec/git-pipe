@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
+	"github.com/jessevdk/go-flags"
 	"github.com/reddec/git-pipe/backup"
 	"github.com/reddec/git-pipe/backup/filebackup"
 	"github.com/reddec/git-pipe/backup/nobackup"
@@ -26,10 +28,6 @@ import (
 	"github.com/reddec/git-pipe/pipe"
 	"github.com/reddec/git-pipe/remote/git"
 	"github.com/reddec/git-pipe/router"
-	"github.com/reddec/git-pipe/router/embedded"
-
-	"github.com/hashicorp/go-multierror"
-	"github.com/jessevdk/go-flags"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -56,13 +54,21 @@ type Config struct {
 }
 
 type Router struct {
-	Domain  string `long:"domain" short:"d" env:"DOMAIN" default:"localhost" description:"Root domain, default is hostname"`
-	Dummy   bool   `long:"dummy" short:"D" env:"DUMMY" description:"Dummy mode disables HTTP router"`
-	Bind    string `long:"bind" short:"b" env:"BIND" description:"Address to where bind HTTP server" default:"127.0.0.1:8080"`
-	AutoTLS bool   `long:"auto-tls" short:"T" env:"AUTO_TLS" description:"Automatic TLS (Let's Encrypt), ignores bind address and uses 0.0.0.0:443 port"`
-	TLS     bool   `long:"tls" env:"TLS" description:"Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled. Ignored with --auto-tls'" json:"tls"`
-	SSLDir  string `long:"ssl-dir" env:"SSL_DIR" description:"Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it is used as cache dir" default:"ssl"`
-	NoIndex bool   `long:"no-index" env:"NO_INDEX" description:"Disable index page"`
+	Domain      string `long:"domain" short:"d" env:"DOMAIN" default:"localhost" description:"Root domain, default is hostname"`
+	Dummy       bool   `long:"dummy" short:"D" env:"DUMMY" description:"Dummy mode disables HTTP router"`
+	Bind        string `long:"bind" short:"b" env:"BIND" description:"Address to where bind HTTP server" default:"127.0.0.1:8080"`
+	AutoTLS     bool   `long:"auto-tls" short:"T" env:"AUTO_TLS" description:"Automatic TLS (Let's Encrypt), ignores bind address and uses 0.0.0.0:443 port"`
+	TLS         bool   `long:"tls" env:"TLS" description:"Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled. Ignored with --auto-tls'" json:"tls"`
+	SSLDir      string `long:"ssl-dir" env:"SSL_DIR" description:"Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it is used as cache dir" default:"ssl"`
+	NoIndex     bool   `long:"no-index" env:"NO_INDEX" description:"Disable index page"`
+	PathRouting bool   `long:"path-routing" short:"P" env:"PATH_ROUTING" description:"Enable path routing instead of domain-based. Implicitly disables --domain"`
+}
+
+func (rt Router) domain() string {
+	if rt.PathRouting {
+		return ""
+	}
+	return rt.Domain
 }
 
 func main() {
@@ -99,7 +105,7 @@ func run(global context.Context, config Config) error {
 		Poll:      config.Interval,
 		Shutdown:  config.GracefulShutdown,
 		Backup:    config.BackupInterval,
-		Domain:    config.Router.Domain,
+		Domain:    config.Router.domain(),
 	})
 
 	if err != nil {
@@ -185,16 +191,17 @@ func (cfg Config) runRouter(ctx context.Context, manager *pipe.Manager) error {
 	if err != nil {
 		return fmt.Errorf("get port: %w", err)
 	}
-	proxy := embedded.New(embedded.Config{
+	proxy := router.New(router.Config{
 		Index: !cfg.Router.NoIndex,
 		Port:  port,
 	})
-	stated := router.WithState(proxy)
-	manager.Router(stated)
+
+	proxy.Handle(&router.Random{})
+	manager.Router(proxy)
 
 	var listener net.Listener
 	if cfg.Router.AutoTLS {
-		listener = cfg.createAutoTLSListener(stated)
+		listener = cfg.createAutoTLSListener(proxy)
 		cfg.Router.TLS = false
 	} else {
 		listener, err = net.Listen("tcp", cfg.Router.Bind)
@@ -282,7 +289,7 @@ func (cfg Config) createAutoTLSListener(domainsProvider interface {
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(cfg.Router.SSLDir),
 		HostPolicy: func(ctx context.Context, host string) error {
-			if domainsProvider.HasDomain(host) {
+			if (cfg.Router.Domain == host && cfg.Router.PathRouting) || domainsProvider.HasDomain(host) {
 				return nil
 			}
 			return errUnknownDomain

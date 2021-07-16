@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go v1.38.64
 	github.com/cloudflare/cloudflare-go v0.18.0
 	github.com/containerd/containerd v1.5.2 // indirect
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/docker/docker v20.10.7+incompatible
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/gorilla/mux v1.7.3 // indirect

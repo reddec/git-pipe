@@ -19,7 +19,6 @@ import (
 	"github.com/reddec/git-pipe/packs"
 	"github.com/reddec/git-pipe/remote"
 	"github.com/reddec/git-pipe/router"
-	"github.com/reddec/git-pipe/router/dummy"
 )
 
 const (
@@ -72,7 +71,7 @@ func New(ctx context.Context, cfg Config) (*Manager, error) {
 
 	return &Manager{
 		config:   cfg,
-		router:   &dummy.Dummy{},
+		router:   &router.Router{},
 		backup:   &nobackup.NoBackup{},
 		cryptor:  &noecnryption.NoEncryption{},
 		registry: &noregister.NoRegister{},
@@ -107,7 +106,7 @@ func (cfg Config) createNetwork(ctx context.Context) (string, error) {
 type Manager struct {
 	config   Config
 	network  packs.Network
-	router   router.Router
+	router   *router.Router
 	backup   backup.Backup
 	registry dns.DNS
 	cryptor  cryptor.Cryptor
@@ -121,7 +120,7 @@ func (mgt *Manager) Network() packs.Network {
 }
 
 // Router for requests.
-func (mgt *Manager) Router(router router.Router) {
+func (mgt *Manager) Router(router *router.Router) {
 	mgt.router = router
 }
 

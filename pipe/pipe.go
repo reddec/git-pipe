@@ -72,7 +72,7 @@ type pipe struct {
 	cryptoProvider   cryptor.Cryptor
 	backupProvider   backup.Backup
 	dnsProvider      dns.DNS
-	routerProvider   router.Router
+	routerProvider   *router.Router
 	readyCh          chan<- remote.Source
 	network          packs.Network
 }
@@ -153,9 +153,7 @@ func (pipe *pipe) deploy(ctx context.Context) (packs.Pack, error) {
 	}
 
 	pipe.logger.Println("updating routes")
-	if err := pipe.routerProvider.Update(ctx, pipe.name, services); err != nil {
-		return nil, fmt.Errorf("update routes: %w", err)
-	}
+	pipe.routerProvider.Update(pipe.name, services)
 
 	pipe.logger.Println("updated")
 	return pack, nil

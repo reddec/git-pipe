@@ -13,7 +13,7 @@ import (
 
 	"github.com/reddec/git-pipe/internal"
 	git2 "github.com/reddec/git-pipe/remote/git"
-	"github.com/reddec/git-pipe/router/embedded"
+	"github.com/reddec/git-pipe/router"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -102,8 +102,8 @@ services:
 	})
 	assert.NoError(t, err)
 
-	nx := embedded.New(embedded.Config{})
-
+	nx := router.New(router.Config{})
+	nx.Handle(&router.Random{})
 	srv := httptest.NewServer(nx)
 	defer srv.Close()
 	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())

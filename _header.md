@@ -68,4 +68,5 @@ Wait a bit to finish building and go to
 * [ ] authorization: by JWT/by token/by external oauth for requests for the embedded router
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
-
+* [ ] lazy initialization
+* [x] path routing as alternative to domain-based
