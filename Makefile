@@ -28,7 +28,7 @@ snapshot: man
 
 assemble-docs: build/git-pipe
 	cat _header.md > README.md
-	find _docs -name '*.md' -type f | sort | xargs -n 1 cat | sed 's/^#/\n##/' >> README.md
+	find _docs -name '*.md' -type f | sort | xargs -n 1 sed 's/^#/\n\n##/' | sed 's/\n\n/\n/' >> README.md
 	echo '\n\n## Usage\n\n' >> README.md
 	stty rows 1024 cols 1024
 	./build/git-pipe --help | grep '  ' | sed -n -r '/^\s+[a-z]/p' | tail -n +2 | sed -E 's/^\s+([a-z]+)\s+(.*)?/* `\1` - \2/' >> README.md

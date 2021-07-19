@@ -72,7 +72,9 @@ Wait a bit to finish building and go to
 * [ ] support GitHub-like webhooks
 * [ ] lazy initialization
 * [x] path routing as alternative to domain-based
+
 ## Installation
+
 
 
 ### Requirements
@@ -87,9 +89,11 @@ During the first deployment, the following images will be downloaded automatical
 * busybox
 
 
+
 ### Pre-built binary
 
 Download binary for your OS and arch from [github releases](https://github.com/reddec/git-pipe/releases/latest).
+
 
 
 ### Docker
@@ -104,6 +108,7 @@ To download the latest version use:
     docker pull reddec/git-pipe:latest
 
 
+
 ### Debian/Ubuntu installation
 
 Download and install required .deb file from [github releases](https://github.com/reddec/git-pipe/releases/latest).
@@ -112,7 +117,9 @@ Download and install required .deb file from [github releases](https://github.co
 [docker-compose](https://docs.docker.com/compose/install/) from the official Docker repository instead of APT. APT repos could be very outdated.
 
 
+
 ## Supported repo types
+
 
 
 ### docker-compose
@@ -126,6 +133,7 @@ Flow:
 - `start` equal to `docker-compose up`
 
 
+
 ### docker
 
 Requires Dockerfile in the root directory. Will be executed as-is.
@@ -133,7 +141,9 @@ Requires Dockerfile in the root directory. Will be executed as-is.
 Flow:
 
 - `build` equal to `docker build`
-- `start` equal to `docker run`# Docker Compose
+- `start` equal to `docker run`
+
+## Docker Compose
 
 > tested on docker-compose 1.27
 
@@ -150,6 +160,7 @@ Flow:
 
 Domains will be generated as> `<port?>.<x-domain|service>.<x-domain|project>.<root-domain>`
 and `<x-domain|project>.<root-domain>` points to `<first x-root: true|www|web|gateway>`
+
 
 
 ### Minimal example:
@@ -181,6 +192,7 @@ Generated mapping (root domain (`-d,--domain,$DOMAIN`) is `localhost`):
 
 Root domain: `mini.localhost` points to `web` service to internal port `80` (the first service with name `web`, first port
 in array)
+
 
 
 ### Override everything example
@@ -217,6 +229,7 @@ Generated mapping (root domain (`-d,--domain,$DOMAIN`) is `localhost`):
 Root domain: `super.localhost` points to `api` service to internal port `80` (the first service with `x-root: yes`, first
 port in array)
 
+
 ## Backup
 
 For the single Dockerfile setup:
@@ -234,6 +247,7 @@ The default encryption is symmetric AES-256 CBC done by OpenSSL. Encryption key 
 by-default equal to `git-pipe-change-me`.
 
 Restore will be done **automatically** before the first run.
+
 
 
 ### Supported destination
@@ -267,6 +281,7 @@ Backup URL: `s3://<id>:<secret>@s3.<region>.backblazeb2.com/<bucket name>`
 
 > (B2) There is some lag between backup and availability to download. Usually, it's around 2-5 minutes for me. 
 
+
 ## Git
 
 git-pipe uses `git` executable so all configuration from `~/.git` is supported.
@@ -274,7 +289,9 @@ git-pipe uses `git` executable so all configuration from `~/.git` is supported.
 It is a good idea to generate deployment SSH keys with read-only access for production usage, however, it is not
 mandatory.
 
+
 ## Run
+
 
 
 ### As binary
@@ -303,6 +320,7 @@ two universal methods of how to route traffic from the unknown amount of domains
 1. Route wildcard `*` sub-domain to the node and use the sub-domain as root domain in git-pipe. For example: for
    wildcard domain `*.apps.mydomain.com`, git-pipe should be launched with flag `-d apps.mydomain.com`
 2. Use automatic DNS registration from [providers](#supported-providers)
+
 
 
 ### As docker
@@ -340,6 +358,7 @@ By default, SSH will be used without strict host checking. To harden pulling you
 to `/root/.ssh/config`.
 
 
+
 #### Volumes
 
 `/app/backups` - default directory for backups. Will not be used in case of non-file (ex: S3) backup. Without S3 it
@@ -352,7 +371,9 @@ re-download repos anytime.
 **highly recommended** to persist this volume to prevent hitting rate-limit from Let's Encrypt.
 
 In case you are using your certificates, you should them as `server.key` and `server.crt` and you may mount them in
-read-only mode.# Environment variables
+read-only mode.
+
+## Environment variables
 
 `git-pipe` will pass the environment to the packs by prefix: where prefix is repo name (simple or FQDN - depends on setup)
 in upper case with dash replaced to underscore. Passed keys will be trimmed from suffix: `TINC_BOOT_X_Y_Z` will be
@@ -378,9 +399,11 @@ In case you used `--fqdn` you should specify the full name of repo: `MY_EXAMPLE.
 
 
 
+
 ### docker
 
 Trivial: just use environment variables as-is.
+
 
 
 ### docker-compose
@@ -397,6 +420,7 @@ services:
       DB_URL: "${DB_URL:-localhost}"
 ```
 
+
 ## Router
 
 Router (proxy) provides reverse-proxy concept.
@@ -404,9 +428,11 @@ Router (proxy) provides reverse-proxy concept.
 `-D, --dummy, $DUMMY` disables router completely. Could be useful for services deployed without HTTP services.
 
 
+
 ### Domain routing
 
 By-default, each repo and service deployed as separated domain. Root domain can be defined in `-d,--domain,$DOMAIN`.
+
 
 
 ### Path routing
@@ -415,6 +441,7 @@ In case multiple domains is not an option the path-based routing can be useful. 
 flag `-P,--path-routing,$PATH_ROUTING` which means that services will be under the same domain, but under different path
 prefixes. In this mode, `--domain` flag will not be used for services name,
 however, it still required for automatic TLS. 
+
 
 
 ## DNS
@@ -431,7 +458,9 @@ be done in several ways:
    use flag `-p, --provider, $PROVIDER` and provider-specific flags.
 
 
+
 ### Supported providers
+
 
 
 #### Cloudflare
@@ -458,7 +487,9 @@ Options:
 * `--cloudflare.proxy` (`$CLOUDFLARE_PROXY`) - Let Cloudflare proxy traffic. Implies some level of protection and
   automatic SSL between client and Cloudflare
 * `--cloudflare.api-token <TOKEN>` (`$CLOUDFLARE_API_TOKEN`) -
-  [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens)# Authorization
+  [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens)
+
+## Authorization
 
 It's possible to secure exposed endpoints by JWT.
 
@@ -487,6 +518,7 @@ Tokens can be (sorted by priority):
 
 * in header: `curl -H 'Authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJjbGllbnQxIn0.tj2xpg4u-IHzqXtjfpmI8QUFKQIQUrxPdCQY4JSfCWI' http://app.example.com/`
 * in query: `curl http://app.example.com/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJjbGllbnQxIn0.tj2xpg4u-IHzqXtjfpmI8QUFKQIQUrxPdCQY4JSfCWI`
+
 
 
 ### Generate tokens
