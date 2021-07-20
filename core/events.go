@@ -3,14 +3,14 @@ package core
 type LauncherEvent int
 
 const (
-	LauncherEventScheduled LauncherEvent = iota
-	LauncherEventCreated
-	LauncherEventCreateFailed
-	LauncherEventReady
-	LauncherEventRunFailed
-	LauncherEventStopped
-	LauncherEventRemoved
-	LauncherEventRemoveFailed
+	LauncherEventScheduled    LauncherEvent = 0b00000001
+	LauncherEventCreated      LauncherEvent = 0b00000010
+	LauncherEventCreateFailed LauncherEvent = 0b00000100
+	LauncherEventReady        LauncherEvent = 0b00001000
+	LauncherEventRunFailed    LauncherEvent = 0b00010000
+	LauncherEventStopped      LauncherEvent = 0b00100000
+	LauncherEventRemoved      LauncherEvent = 0b01000000
+	LauncherEventRemoveFailed LauncherEvent = 0b10000000
 )
 
 type LauncherEventMessage struct {
@@ -19,9 +19,9 @@ type LauncherEventMessage struct {
 	Error  error // nil for non-Failed events
 }
 
-func WaitForLauncherEvent(events <-chan LauncherEventMessage, daemon string, filter LauncherEvent) bool {
+func WaitForLauncherEvent(events <-chan LauncherEventMessage, daemon string, mask LauncherEvent) bool {
 	for item := range events {
-		if item.Event == filter && item.Daemon == daemon {
+		if (item.Event&mask) != 0 && item.Daemon == daemon {
 			return true
 		}
 	}

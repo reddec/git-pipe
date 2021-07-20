@@ -17,18 +17,14 @@ import (
 	"github.com/reddec/git-pipe/cryptor"
 )
 
-func NewVolumeStorage(provider backup.Backup, encryption cryptor.Cryptor, tempDir string, driver string) (*VolumeStorage, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("create docker client: %w", err)
-	}
+func NewVolumeStorage(provider backup.Backup, cli *client.Client, encryption cryptor.Cryptor, tempDir string, driver string) *VolumeStorage {
 	return &VolumeStorage{
 		cli:        cli,
 		provider:   provider,
 		encryption: encryption,
 		tempDir:    tempDir,
 		driver:     driver,
-	}, nil
+	}
 }
 
 type VolumeStorage struct {
@@ -37,10 +33,6 @@ type VolumeStorage struct {
 	encryption cryptor.Cryptor
 	tempDir    string
 	driver     string
-}
-
-func (sw *VolumeStorage) Close() error {
-	return sw.cli.Close()
 }
 
 func (sw *VolumeStorage) Restore(ctx context.Context, name string, volumeNames []string) error {

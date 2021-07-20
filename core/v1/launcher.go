@@ -71,7 +71,6 @@ func (run *Launcher) Run(ctx context.Context, environment core.Environment) {
 		return
 	}
 	defer atomic.StoreInt32(&run.isRunning, 0)
-	logger := internal.SubLogger(ctx, "launcher")
 
 LOOP:
 	for {
@@ -85,7 +84,7 @@ LOOP:
 		case name := <-run.finished:
 			delete(run.deployed, name)
 		case event := <-run.events:
-			run.distributeEvent(logger, event)
+			run.distributeEvent(event)
 		case subs := <-run.toSubscribe:
 			run.subscribers[subs.ch] = subs.ch
 			if subs.replay {
@@ -110,7 +109,7 @@ LOOP:
 		case name := <-run.finished:
 			delete(run.deployed, name)
 		case event := <-run.events:
-			run.distributeEvent(logger, event)
+			run.distributeEvent(event)
 		case ch := <-run.toUnsubscribe:
 			if v, ok := run.subscribers[ch]; ok {
 				close(v)
@@ -155,7 +154,7 @@ func (run *Launcher) replay(to chan core.LauncherEventMessage) {
 	}
 }
 
-func (run *Launcher) distributeEvent(logger internal.Logger, event core.LauncherEventMessage) {
+func (run *Launcher) distributeEvent(event core.LauncherEventMessage) {
 	if d, ok := run.deployed[event.Daemon]; ok {
 		d.lastEvent = event
 	}
@@ -163,7 +162,7 @@ func (run *Launcher) distributeEvent(logger internal.Logger, event core.Launcher
 		select {
 		case ch <- event:
 		default:
-			logger.Println("notification channel overflow")
+			//TODO: notify about overflow
 		}
 	}
 }
@@ -179,7 +178,12 @@ func (run *Launcher) notify(event core.LauncherEvent, descriptor core.Descriptor
 func (run *Launcher) destroy(name string) {
 	if d, ok := run.deployed[name]; ok {
 		d.stop()
+		return
 	}
+	run.distributeEvent(core.LauncherEventMessage{
+		Event:  core.LauncherEventRemoved,
+		Daemon: name,
+	})
 }
 
 func (run *Launcher) spawn(ctx context.Context, descriptor core.Descriptor, environment core.Environment) {
@@ -188,17 +192,17 @@ func (run *Launcher) spawn(ctx context.Context, descriptor core.Descriptor, envi
 	}
 
 	child, cancel := context.WithCancel(ctx)
+	run.deployed[descriptor.Name] = &runningDaemon{
+		stop: cancel,
+	}
+	run.distributeEvent(core.LauncherEventMessage{
+		Event:  core.LauncherEventScheduled,
+		Daemon: descriptor.Name,
+	})
 	go func() {
 		run.runDaemonLoop(child, descriptor, environment)
 		run.finished <- descriptor.Name
 	}()
-	run.deployed[descriptor.Name] = &runningDaemon{
-		stop: cancel,
-		lastEvent: core.LauncherEventMessage{
-			Event:  core.LauncherEventScheduled,
-			Daemon: descriptor.Name,
-		},
-	}
 }
 
 func (run *Launcher) isDeployed(name string) bool {

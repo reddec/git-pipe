@@ -12,12 +12,7 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func NewDockerNetwork(ctx context.Context, name string) (*DockerNetwork, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("create docker client: %w", err)
-	}
-
+func NewDockerNetwork(ctx context.Context, cli *client.Client, name string) (*DockerNetwork, error) {
 	dn := &DockerNetwork{
 		cli: cli,
 	}
@@ -35,6 +30,10 @@ type DockerNetwork struct {
 	id  string
 }
 
+func (dn *DockerNetwork) ID() string {
+	return dn.id
+}
+
 func (dn *DockerNetwork) Join(ctx context.Context, containerID string) (ip string, err error) {
 	ip, err = dn.getIP(ctx, containerID)
 	if err == nil {
@@ -49,10 +48,6 @@ func (dn *DockerNetwork) Join(ctx context.Context, containerID string) (ip strin
 		return "", fmt.Errorf("connect container %s to network %s: %w", containerID, dn.id, err)
 	}
 	return dn.getIP(ctx, containerID)
-}
-
-func (dn *DockerNetwork) Close() error {
-	return dn.cli.Close()
 }
 
 func (dn *DockerNetwork) getIP(ctx context.Context, containerID string) (ip string, err error) {

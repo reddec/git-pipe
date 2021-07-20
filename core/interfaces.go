@@ -1,13 +1,18 @@
 package core
 
-import "context"
+import (
+	"context"
+	"net/http"
+
+	"github.com/docker/docker/client"
+)
 
 // Service exposed by someone.
 type Service struct {
-	Namespace string   // daemon name / package name / group name.
-	Name      string   // service name. Should be unique within one namespace.
-	Addresses []string // IP:PORT addresses of service (could be several in case of scaling)
-	Domain    string   // optional, if not defined - domain will be computed from name and namespace.
+	Namespace string       // daemon name / package name / group name.
+	Name      string       // service name. Should be unique within one namespace.
+	Domain    string       // optional, if not defined - domain will be computed from name and namespace.
+	Endpoint  http.Handler // optional endpoint handler
 }
 
 func (srv *Service) Label() string {
@@ -45,6 +50,8 @@ type Storage interface {
 type Network interface {
 	// Join container to network or gather info. Should return assigned IP. Should not fail if container already linked.
 	Join(ctx context.Context, containerID string) (ip string, err error)
+	// ID of network in docker.
+	ID() string
 }
 
 // Descriptor of daemon to launch.
@@ -62,7 +69,7 @@ type Launcher interface {
 	//   - Remove
 	// Multiple daemons with the same name will be ignored (only first will be processed).
 	Launch(ctx context.Context, descriptor Descriptor) error
-	// Remove daemon in background. Also will call Stop and Remove.
+	// Remove daemon in background. Also will call Stop and Remove. Removing already removed daemon should generate RemovedEvent.
 	Remove(ctx context.Context, daemon string) error
 	// Subscribe for events. Unsubscribe MUST be called to free resources. Reply flags requests for last events messages from active daemons.
 	Subscribe(ctx context.Context, buffer int, replay bool) (<-chan LauncherEventMessage, error)
@@ -91,4 +98,5 @@ type Environment interface {
 	Registry() Registry
 	Storage() Storage
 	Network() Network
+	Docker() client.APIClient // docker client
 }

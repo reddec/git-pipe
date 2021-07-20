@@ -18,6 +18,8 @@ func TestLauncher_Launch(t *testing.T) {
 
 	env, err := v1.New(ctx, v1.DefaultConfig(), &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
 	require.NoError(t, err)
+	defer env.Close()
+
 	go func() {
 		env.Run(ctx)
 		close(done)

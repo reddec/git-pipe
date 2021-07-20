@@ -4,21 +4,24 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/go-multierror"
+	"github.com/docker/docker/client"
 	"github.com/reddec/git-pipe/backup"
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/cryptor"
 )
 
 func New(ctx context.Context, config Config, provider backup.Backup, encryption cryptor.Cryptor) (*Environment, error) {
-	network, err := NewDockerNetwork(ctx, config.NetworkName)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("create docker client: %w", err)
+	}
+
+	network, err := NewDockerNetwork(ctx, cli, config.NetworkName)
 	if err != nil {
 		return nil, fmt.Errorf("initialize networking: %w", err)
 	}
-	storage, err := NewVolumeStorage(provider, encryption, config.TempDir, config.Driver)
-	if err != nil {
-		return nil, fmt.Errorf("initialize storage: %w", err)
-	}
+
+	storage := NewVolumeStorage(provider, cli, encryption, config.TempDir, config.Driver)
 	launcher := NewLauncher(config.RetryDeployInterval, config.GracefulTimeout)
 	registry := NewRegistry()
 	return &Environment{
@@ -26,6 +29,7 @@ func New(ctx context.Context, config Config, provider backup.Backup, encryption 
 		network:  network,
 		registry: registry,
 		storage:  storage,
+		client:   cli,
 	}, nil
 }
 
@@ -34,6 +38,11 @@ type Environment struct {
 	network  *DockerNetwork
 	registry core.Registry
 	storage  *VolumeStorage
+	client   *client.Client
+}
+
+func (env *Environment) Docker() client.APIClient {
+	return env.client
 }
 
 func (env *Environment) Launcher() core.Launcher {
@@ -57,12 +66,5 @@ func (env *Environment) Run(ctx context.Context) {
 }
 
 func (env *Environment) Close() error {
-	var all *multierror.Error
-	if err := env.storage.Close(); err != nil {
-		all = multierror.Append(all, err)
-	}
-	if err := env.network.Close(); err != nil {
-		all = multierror.Append(all, err)
-	}
-	return all
+	return env.client.Close()
 }
