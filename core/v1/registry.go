@@ -150,7 +150,7 @@ func (reg *registry) replay(to chan core.RegistryEventMessage) {
 			Service: srv,
 		}:
 		default:
-
+			return
 		}
 	}
 }

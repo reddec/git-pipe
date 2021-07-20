@@ -3,12 +3,12 @@ package core
 type LauncherEvent int
 
 const (
-	LauncherEventCreated LauncherEvent = iota
+	LauncherEventScheduled LauncherEvent = iota
+	LauncherEventCreated
 	LauncherEventCreateFailed
-	LauncherEventStarted
-	LauncherEventStartFailed
+	LauncherEventReady
+	LauncherEventRunFailed
 	LauncherEventStopped
-	LauncherEventStopFailed
 	LauncherEventRemoved
 	LauncherEventRemoveFailed
 )

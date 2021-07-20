@@ -7,24 +7,28 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/internal"
 )
 
-func NewLauncher(retryDeployInterval, gracefulTimeout time.Duration) *Launcher {
+func NewLauncher(retryDeployInterval, cleanupTimeout time.Duration) *Launcher {
 	return &Launcher{
 		toDeploy:            make(chan core.Descriptor),
 		toDestroy:           make(chan string),
 		finished:            make(chan string),
 		events:              make(chan core.LauncherEventMessage),
-		toSubscribe:         make(chan chan core.LauncherEventMessage),
+		toSubscribe:         make(chan subscription),
 		toUnsubscribe:       make(chan (<-chan core.LauncherEventMessage)),
 		retryDeployInterval: retryDeployInterval,
-		gracefulTimeout:     gracefulTimeout,
-		deployed:            make(map[string]func()),
+		cleanupTimeout:      cleanupTimeout,
+		deployed:            make(map[string]*runningDaemon),
 		subscribers:         make(map[<-chan core.LauncherEventMessage]chan core.LauncherEventMessage),
 	}
+}
+
+type subscription struct {
+	ch     chan core.LauncherEventMessage
+	replay bool
 }
 
 type Launcher struct {
@@ -32,14 +36,14 @@ type Launcher struct {
 	toDestroy     chan string
 	finished      chan string
 	events        chan core.LauncherEventMessage
-	toSubscribe   chan chan core.LauncherEventMessage
+	toSubscribe   chan subscription
 	toUnsubscribe chan (<-chan core.LauncherEventMessage)
 
 	isRunning int32
 
 	retryDeployInterval time.Duration
-	gracefulTimeout     time.Duration
-	deployed            map[string]func()
+	cleanupTimeout      time.Duration
+	deployed            map[string]*runningDaemon
 	subscribers         map[<-chan core.LauncherEventMessage]chan core.LauncherEventMessage
 }
 
@@ -82,8 +86,11 @@ LOOP:
 			delete(run.deployed, name)
 		case event := <-run.events:
 			run.distributeEvent(logger, event)
-		case ch := <-run.toSubscribe:
-			run.subscribers[ch] = ch
+		case subs := <-run.toSubscribe:
+			run.subscribers[subs.ch] = subs.ch
+			if subs.replay {
+				run.replay(subs.ch)
+			}
 		case ch := <-run.toUnsubscribe:
 			if v, ok := run.subscribers[ch]; ok {
 				close(v)
@@ -93,8 +100,8 @@ LOOP:
 	}
 
 	// request all daemons to finish
-	for _, cancel := range run.deployed {
-		cancel()
+	for _, d := range run.deployed {
+		d.stop()
 	}
 
 	// minimal processing: only un-subscribe, events and finish
@@ -118,10 +125,10 @@ LOOP:
 	}
 }
 
-func (run *Launcher) Subscribe(ctx context.Context, buffer int) (<-chan core.LauncherEventMessage, error) {
+func (run *Launcher) Subscribe(ctx context.Context, buffer int, replay bool) (<-chan core.LauncherEventMessage, error) {
 	ch := make(chan core.LauncherEventMessage, buffer)
 	select {
-	case run.toSubscribe <- ch:
+	case run.toSubscribe <- subscription{ch: ch, replay: replay}:
 	case <-ctx.Done():
 		close(ch)
 		return nil, ctx.Err()
@@ -138,7 +145,20 @@ func (run *Launcher) Unsubscribe(ctx context.Context, ch <-chan core.LauncherEve
 	}
 }
 
+func (run *Launcher) replay(to chan core.LauncherEventMessage) {
+	for _, d := range run.deployed {
+		select {
+		case to <- d.lastEvent:
+		default:
+			return
+		}
+	}
+}
+
 func (run *Launcher) distributeEvent(logger internal.Logger, event core.LauncherEventMessage) {
+	if d, ok := run.deployed[event.Daemon]; ok {
+		d.lastEvent = event
+	}
 	for _, ch := range run.subscribers {
 		select {
 		case ch <- event:
@@ -157,8 +177,8 @@ func (run *Launcher) notify(event core.LauncherEvent, descriptor core.Descriptor
 }
 
 func (run *Launcher) destroy(name string) {
-	if cancel, ok := run.deployed[name]; ok {
-		cancel()
+	if d, ok := run.deployed[name]; ok {
+		d.stop()
 	}
 }
 
@@ -172,7 +192,13 @@ func (run *Launcher) spawn(ctx context.Context, descriptor core.Descriptor, envi
 		run.runDaemonLoop(child, descriptor, environment)
 		run.finished <- descriptor.Name
 	}()
-	run.deployed[descriptor.Name] = cancel
+	run.deployed[descriptor.Name] = &runningDaemon{
+		stop: cancel,
+		lastEvent: core.LauncherEventMessage{
+			Event:  core.LauncherEventScheduled,
+			Daemon: descriptor.Name,
+		},
+	}
 }
 
 func (run *Launcher) isDeployed(name string) bool {
@@ -196,9 +222,12 @@ func (run *Launcher) runDaemonLoop(global context.Context, descriptor core.Descr
 }
 
 func (run *Launcher) runDaemon(ctx context.Context, descriptor core.Descriptor, globalEnvironment core.Environment) error {
-	environment := core.DaemonEnvironment{
-		Name:        descriptor.Name,
-		Environment: globalEnvironment,
+	environment := &daemonEnvironment{
+		descriptor: descriptor,
+		global:     globalEnvironment,
+		readyFn: func() {
+			run.notify(core.LauncherEventReady, descriptor, nil)
+		},
 	}
 	if err := descriptor.Daemon.Create(ctx, environment); err != nil {
 		run.notify(core.LauncherEventCreateFailed, descriptor, nil)
@@ -206,34 +235,46 @@ func (run *Launcher) runDaemon(ctx context.Context, descriptor core.Descriptor, 
 	}
 	run.notify(core.LauncherEventCreated, descriptor, nil)
 
-	if err := descriptor.Daemon.Start(ctx, environment); err != nil {
-		run.notify(core.LauncherEventStartFailed, descriptor, nil)
-		return fmt.Errorf("start: %w", err)
+	if err := descriptor.Daemon.Run(ctx, environment); err != nil {
+		run.notify(core.LauncherEventRunFailed, descriptor, nil)
+		// fallthrough to remove allocated resources
 	}
-	run.notify(core.LauncherEventStarted, descriptor, nil)
 
-	<-ctx.Done()
-	graceCtx, graceCancel := context.WithTimeout(context.Background(), run.gracefulTimeout)
-	defer graceCancel()
-
-	var group *multierror.Error
-
-	group = multierror.Append(group, ctx.Err())
-
-	if err := descriptor.Daemon.Stop(graceCtx, environment); err != nil {
-		run.notify(core.LauncherEventStopFailed, descriptor, nil)
-		group = multierror.Append(group, err)
-	}
 	run.notify(core.LauncherEventStopped, descriptor, nil)
-
-	removeCtx, removeCancel := context.WithTimeout(context.Background(), run.gracefulTimeout)
+	removeCtx, removeCancel := context.WithTimeout(context.Background(), run.cleanupTimeout)
 	defer removeCancel()
 
 	if err := descriptor.Daemon.Remove(removeCtx, environment); err != nil {
 		run.notify(core.LauncherEventRemoveFailed, descriptor, nil)
-		group = multierror.Append(group, err)
+		return fmt.Errorf("remove: %w", err)
 	}
 	run.notify(core.LauncherEventRemoved, descriptor, nil)
 
-	return group
+	return nil
+}
+
+type runningDaemon struct {
+	stop      func()
+	lastEvent core.LauncherEventMessage
+}
+
+type daemonEnvironment struct {
+	descriptor core.Descriptor
+	global     core.Environment
+	ready      int32
+	readyFn    func()
+}
+
+func (d *daemonEnvironment) Name() string {
+	return d.descriptor.Name
+}
+
+func (d *daemonEnvironment) Global() core.Environment {
+	return d.global
+}
+
+func (d *daemonEnvironment) Ready() {
+	if atomic.CompareAndSwapInt32(&d.ready, 0, 1) {
+		d.readyFn()
+	}
 }

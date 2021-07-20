@@ -70,5 +70,5 @@ Wait a bit to finish building and go to
   *  [ ] OIDC
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
-* [ ] lazy initialization
+* [ ] lazy initialization (ie: bring up service on request only)
 * [x] path routing as alternative to domain-based
