@@ -63,3 +63,7 @@ func LoggerFromContext(ctx context.Context) Logger {
 func SubLogger(ctx context.Context, name string) Logger {
 	return Namespaced(LoggerFromContext(ctx), name)
 }
+
+func WithSubLogger(ctx context.Context, name string) context.Context {
+	return WithLogger(ctx, SubLogger(ctx, name))
+}

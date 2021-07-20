@@ -43,7 +43,7 @@ func (dp *dockerPack) Start(ctx context.Context, env map[string]string) ([]packs
 	for _, cPath := range volumePaths {
 		mountPoints = append(mountPoints, mount.Mount{
 			Type:   mount.TypeVolume,
-			Source: dp.projectName(), // volume created during Build step
+			Source: dp.projectName(), // volume created during Create step
 			Target: cPath,
 		})
 	}
