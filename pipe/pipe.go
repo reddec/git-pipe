@@ -16,7 +16,6 @@ import (
 	"github.com/reddec/git-pipe/internal"
 	"github.com/reddec/git-pipe/packs"
 	"github.com/reddec/git-pipe/packs/compose"
-	"github.com/reddec/git-pipe/packs/dckr"
 	"github.com/reddec/git-pipe/remote"
 	"github.com/reddec/git-pipe/router"
 )
@@ -326,9 +325,6 @@ func (pipe *pipe) ready() {
 func (pipe *pipe) detectPackage() (packs.Pack, error) {
 	if hasAnyFile(pipe.directory, "docker-compose.yaml", "docker-compose.yml") {
 		return compose.New(pipe.directory, pipe.network), nil
-	}
-	if hasAnyFile(pipe.directory, "Dockerfile") {
-		return dckr.New(pipe.directory, pipe.network), nil
 	}
 	return nil, errUnknownPackage
 }

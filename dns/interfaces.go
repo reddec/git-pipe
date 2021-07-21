@@ -15,11 +15,12 @@ type DNS interface {
 
 func Daemonize(provider DNS) core.Daemon {
 	const bufferSize = 1024
-	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) {
-		ch := environment.Environment.Registry().Subscribe(bufferSize, true)
-		defer environment.Environment.Registry().Unsubscribe(ch)
-
+	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) error {
+		ch := environment.Global().Registry().Subscribe(bufferSize, true)
+		defer environment.Global().Registry().Unsubscribe(ch)
 		logger := internal.LoggerFromContext(ctx)
+
+		environment.Ready()
 
 		for event := range ch {
 			if event.Event != core.RegistryEventRegistered {
@@ -30,5 +31,6 @@ func Daemonize(provider DNS) core.Daemon {
 				logger.Println("failed register domain", event.Service.Domain, "for service", event.Service.Label(), ":", err)
 			}
 		}
+		return nil
 	})
 }

@@ -2,17 +2,16 @@ package core
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/docker/docker/client"
 )
 
 // Service exposed by someone.
 type Service struct {
-	Namespace string       // daemon name / package name / group name.
-	Name      string       // service name. Should be unique within one namespace.
-	Domain    string       // optional, if not defined - domain will be computed from name and namespace.
-	Endpoint  http.Handler // optional endpoint handler
+	Namespace string // daemon name / package name / group name.
+	Name      string // service name. Should be unique within one namespace.
+	Domain    string // optional, if not defined - domain will be computed from name and namespace.
+	Address   string // optional endpoint address. Usually it is concatenation of Network.Join result and port.
 }
 
 func (srv *Service) Label() string {
@@ -48,8 +47,14 @@ type Storage interface {
 
 // Network manager.
 type Network interface {
-	// Join container to network or gather info. Should return assigned IP. Should not fail if container already linked.
-	Join(ctx context.Context, containerID string) (ip string, err error)
+	// Join container to network or gather info. Should return assigned routable within network address (ip or hostname). Should not fail if container already linked.
+	Join(ctx context.Context, containerID string) (address string, err error)
+	// Leave network. Should not fail if container not exists or network already not connected.
+	Leave(ctx context.Context, containerID string) error
+	// Resolve address or address with port to routable (from application) endpoint (with port if needed).
+	// Returned address may be different then after Join in case git-pipe is running as standalone application outside of docker.
+	// It may work not properly in case container not running.
+	Resolve(ctx context.Context, address string) (string, error)
 	// ID of network in docker.
 	ID() string
 }

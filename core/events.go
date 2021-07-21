@@ -1,5 +1,10 @@
 package core
 
+import (
+	"context"
+)
+
+//go:generate stringer -type LauncherEvent
 type LauncherEvent int
 
 const (
@@ -20,12 +25,31 @@ type LauncherEventMessage struct {
 }
 
 func WaitForLauncherEvent(events <-chan LauncherEventMessage, daemon string, mask LauncherEvent) bool {
-	for item := range events {
-		if (item.Event&mask) != 0 && item.Daemon == daemon {
-			return true
+	return WaitForLauncherEventContext(context.Background(), events, daemon, mask)
+}
+
+func WaitForLauncherEventContext(ctx context.Context, events <-chan LauncherEventMessage, daemon string, mask LauncherEvent) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case item, ok := <-events:
+			if !ok {
+				return false
+			}
+			if (item.Event&mask) != 0 && item.Daemon == daemon {
+				return true
+			}
 		}
 	}
-	return false
+}
+
+func LogEvents(logger interface{ Println(...interface{}) }, events <-chan LauncherEventMessage) {
+	go func() {
+		for event := range events {
+			logger.Println("(event)", "daemon:", event.Daemon, "err:", event.Error, "event:", event.Event)
+		}
+	}()
 }
 
 type RegistryEvent int

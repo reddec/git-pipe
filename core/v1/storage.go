@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -36,6 +37,10 @@ type VolumeStorage struct {
 }
 
 func (sw *VolumeStorage) Restore(ctx context.Context, name string, volumeNames []string) error {
+	if err := sw.ensureVolumes(ctx, volumeNames); err != nil {
+		return fmt.Errorf("create volumes if needed: %w", err)
+	}
+
 	encryptedFile, err := ioutil.TempFile(sw.tempDir, "")
 	if err != nil {
 		return fmt.Errorf("create temp encrypted: %w", err)
@@ -45,7 +50,9 @@ func (sw *VolumeStorage) Restore(ctx context.Context, name string, volumeNames [
 	}
 	defer os.RemoveAll(encryptedFile.Name())
 
-	if err := sw.provider.Restore(ctx, name, encryptedFile.Name()); err != nil {
+	if err := sw.provider.Restore(ctx, name, encryptedFile.Name()); errors.Is(err, backup.ErrBackupNotExists) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("download archive: %w", err)
 	}
 
@@ -61,10 +68,6 @@ func (sw *VolumeStorage) Restore(ctx context.Context, name string, volumeNames [
 
 	if err := sw.encryption.Decrypt(ctx, encryptedFile.Name(), rawFile.Name()); err != nil {
 		return fmt.Errorf("decrypt archive: %w", err)
-	}
-
-	if err := sw.ensureVolumes(ctx, volumeNames); err != nil {
-		return fmt.Errorf("create volumes if needed: %w", err)
 	}
 
 	return sw.copyArchiveToVolumes(ctx, volumeNames, rawFile.Name())

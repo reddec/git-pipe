@@ -234,13 +234,13 @@ func (run *Launcher) runDaemon(ctx context.Context, descriptor core.Descriptor, 
 		},
 	}
 	if err := descriptor.Daemon.Create(ctx, environment); err != nil {
-		run.notify(core.LauncherEventCreateFailed, descriptor, nil)
+		run.notify(core.LauncherEventCreateFailed, descriptor, err)
 		return fmt.Errorf("build: %w", err)
 	}
 	run.notify(core.LauncherEventCreated, descriptor, nil)
 
 	if err := descriptor.Daemon.Run(ctx, environment); err != nil {
-		run.notify(core.LauncherEventRunFailed, descriptor, nil)
+		run.notify(core.LauncherEventRunFailed, descriptor, err)
 		// fallthrough to remove allocated resources
 	}
 
@@ -249,7 +249,7 @@ func (run *Launcher) runDaemon(ctx context.Context, descriptor core.Descriptor, 
 	defer removeCancel()
 
 	if err := descriptor.Daemon.Remove(removeCtx, environment); err != nil {
-		run.notify(core.LauncherEventRemoveFailed, descriptor, nil)
+		run.notify(core.LauncherEventRemoveFailed, descriptor, err)
 		return fmt.Errorf("remove: %w", err)
 	}
 	run.notify(core.LauncherEventRemoved, descriptor, nil)
