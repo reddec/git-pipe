@@ -2,17 +2,19 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -197,36 +199,36 @@ func JoinNetwork(ctx context.Context, containerID string, networkID string) erro
 	return nil
 }
 
-func CreateVolume(ctx context.Context, name string) error {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	_, err = cli.VolumeInspect(ctx, name)
-	if err != nil && !strings.Contains(err.Error(), "No such") {
-		return fmt.Errorf("inspect volume: %w", err)
-	}
-	if err == nil {
-		return nil
-	}
-
-	_, err = cli.VolumeCreate(ctx, volume.VolumeCreateBody{
-		Driver: "local",
-		Name:   name,
-	})
-	if err != nil {
-		return fmt.Errorf("create volume: %w", err)
-	}
-
-	return nil
-}
-
 type ErrDockerAPI struct {
 	Message string
 }
 
 func (eda *ErrDockerAPI) Error() string {
 	return eda.Message
+}
+
+func WaitToBeHealthy(ctx context.Context, cli client.APIClient, containerID string) error {
+	child, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	chEvents, chErr := cli.Events(child, types.EventsOptions{
+		Filters: filters.NewArgs(filters.Arg("container", containerID)),
+		Since:   time.Hour.String(),
+	})
+
+	for {
+		select {
+		case event, ok := <-chEvents:
+			if !ok {
+				return errors.New("no event")
+			}
+			if event.Status == "health_status: healthy" {
+				return nil
+			}
+		case err := <-chErr:
+			return fmt.Errorf("wait for event: %w", err)
+		case <-child.Done():
+			return child.Err()
+		}
+	}
 }

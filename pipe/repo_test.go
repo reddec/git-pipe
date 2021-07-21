@@ -44,7 +44,8 @@ func TestRepo(t *testing.T) {
 		"Dockerfile": `
 FROM hashicorp/http-echo
 EXPOSE 80
-CMD -listen :80 -text "hello"
+HEALTHCHECK --interval=1s CMD ["/http-echo", "-version"]
+CMD ["-listen", ":80", "-text", "hello"]
 `,
 	})
 

@@ -82,6 +82,18 @@ func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironm
 	if err != nil {
 		return fmt.Errorf("start container: %w", err)
 	}
+
+	info, err := environment.Global().Docker().ContainerInspect(ctx, dd.containerID)
+	if err != nil {
+		return fmt.Errorf("inspect container: %w", err)
+	}
+
+	if info.State.Health != nil {
+		if err := internal.WaitToBeHealthy(ctx, environment.Global().Docker(), dd.containerID); err != nil {
+			return fmt.Errorf("health checks: %w", err)
+		}
+	}
+
 	for _, srv := range dd.services {
 		if err := environment.Global().Registry().Register(srv); err != nil {
 			return fmt.Errorf("register service %s: %w", srv.Label(), err)

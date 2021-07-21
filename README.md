@@ -70,7 +70,7 @@ Wait a bit to finish building and go to
   *  [ ] OIDC
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
-* [ ] lazy initialization
+* [ ] lazy initialization (ie: bring up service on request only)
 * [x] path routing as alternative to domain-based
 
 ## Installation
@@ -547,6 +547,27 @@ Example with expiration after 3 hours 20 minutes and 5 seconds:
 Example how to generate for multiple same clients:
 
     git-pipe jwt -s changeme my-client-1 my-client-2 my-client-3 my-client-4
+
+## Health check
+
+git-pipe supports health checks in single Dockerfile repositories. It will not route traffic to the service until
+container will become healthy.
+
+See [how to define health check in Dockerfile](https://docs.docker.com/engine/reference/builder/#healthcheck).
+
+Example for common HTTP service:
+
+```
+FROM my-service
+EXPOSE 80
+
+
+## ....
+HEALTHCHECK --interval=3s CMD curl -f http://localhost:80/health || exit 1
+
+
+## ...
+```
 
 ## Usage
 
