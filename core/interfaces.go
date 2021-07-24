@@ -2,16 +2,25 @@ package core
 
 import (
 	"context"
+	"math/rand"
 
 	"github.com/docker/docker/client"
 )
 
 // Service exposed by someone.
 type Service struct {
-	Namespace string // daemon name / package name / group name.
-	Name      string // service name. Should be unique within one namespace.
-	Domain    string // optional, if not defined - domain will be computed from name and namespace.
-	Address   string // optional endpoint address. Usually it is concatenation of Network.Join result and port.
+	Namespace string   // daemon name / package name / group name.
+	Name      string   // service name. Should be unique within one namespace.
+	Domain    string   // optional, if not defined - domain will be computed from name and namespace. Final domain name could be different then suggested.
+	Addresses []string // optional endpoint address. Usually it is concatenation of Network.Join result and port.
+	Ping      Ping     // optional ping handler.
+}
+
+func (srv Service) Address() string {
+	if len(srv.Addresses) == 0 {
+		return ""
+	}
+	return srv.Addresses[rand.Int()%len(srv.Addresses)]
 }
 
 func (srv *Service) Label() string {
@@ -20,6 +29,8 @@ func (srv *Service) Label() string {
 
 // Registry of services.
 type Registry interface {
+	// Domain for root request. If not empty - will be included to all registrations.
+	Domain() string
 	// Register service.
 	Register(srv Service) error
 	// Unregister service by name.
@@ -104,4 +115,9 @@ type Environment interface {
 	Storage() Storage
 	Network() Network
 	Docker() client.APIClient // docker client
+}
+
+type Ping interface {
+	// Ping service. Should return error if not available.
+	Ping(ctx context.Context, environment Environment) error
 }

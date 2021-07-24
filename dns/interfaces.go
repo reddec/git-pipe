@@ -5,6 +5,7 @@ import (
 
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/internal"
+	"go.uber.org/zap"
 )
 
 // DNS records management.
@@ -18,7 +19,7 @@ func Daemonize(provider DNS) core.Daemon {
 	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) error {
 		ch := environment.Global().Registry().Subscribe(bufferSize, true)
 		defer environment.Global().Registry().Unsubscribe(ch)
-		logger := internal.LoggerFromContext(ctx)
+		logger := internal.LoggerFromContext(ctx).Named("dns")
 
 		environment.Ready()
 
@@ -26,9 +27,12 @@ func Daemonize(provider DNS) core.Daemon {
 			if event.Event != core.RegistryEventRegistered {
 				continue
 			}
-
+			logger = logger.With(zap.String("domain", event.Service.Domain),
+				zap.String("service", event.Service.Name),
+				zap.String("namespace", event.Service.Namespace))
+			logger.Debug("registering domain")
 			if err := provider.Register(ctx, []string{event.Service.Domain}); err != nil {
-				logger.Println("failed register domain", event.Service.Domain, "for service", event.Service.Label(), ":", err)
+				logger.Error("failed register domain", zap.Error(err))
 			}
 		}
 		return nil

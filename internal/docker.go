@@ -8,7 +8,6 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -207,13 +206,13 @@ func (eda *ErrDockerAPI) Error() string {
 	return eda.Message
 }
 
-func WaitToBeHealthy(ctx context.Context, cli client.APIClient, containerID string) error {
+func WaitToBeHealthy(ctx context.Context, cli client.APIClient, containerID string, created string) error {
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	chEvents, chErr := cli.Events(child, types.EventsOptions{
 		Filters: filters.NewArgs(filters.Arg("container", containerID)),
-		Since:   time.Hour.String(),
+		Since:   created,
 	})
 
 	for {

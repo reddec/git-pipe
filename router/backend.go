@@ -20,7 +20,14 @@ func (rnd *Random) ServeRoute(writer http.ResponseWriter, request *http.Request,
 		http.Error(writer, "backend address not found", http.StatusBadGateway)
 		return ErrAbort
 	}
-	addr := route.Service.Addresses[rnd.int()%len(route.Service.Addresses)]
+	link := route.Service.Addresses[rnd.int()%len(route.Service.Addresses)]
+
+	addr, err := route.Environment.Network().Resolve(request.Context(), link)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadGateway)
+		return err
+	}
+
 	u, err := url.Parse("http://" + addr)
 	if err != nil {
 		return fmt.Errorf("parse backend URL: %w", err)

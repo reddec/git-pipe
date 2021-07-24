@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/internal"
+	"go.uber.org/zap"
 )
 
 func New(directory string, env map[string]string) core.Daemon {
@@ -77,7 +78,7 @@ func (dd *dockerDaemon) Create(ctx context.Context, environment core.DaemonEnvir
 }
 
 func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironment) error {
-	// TODO: implement lazy start here - check health status (https://docs.docker.com/engine/reference/builder/#healthcheck)
+	// TODO: implement lazy start here
 	err := environment.Global().Docker().ContainerStart(ctx, dd.containerID, types.ContainerStartOptions{})
 	if err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -89,7 +90,7 @@ func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironm
 	}
 
 	if info.State.Health != nil {
-		if err := internal.WaitToBeHealthy(ctx, environment.Global().Docker(), dd.containerID); err != nil {
+		if err := internal.WaitToBeHealthy(ctx, environment.Global().Docker(), dd.containerID, info.Created); err != nil {
 			return fmt.Errorf("health checks: %w", err)
 		}
 	}
@@ -136,14 +137,14 @@ func (dd *dockerDaemon) exposedServices(namespace string) []core.Service {
 		services = append(services, core.Service{
 			Namespace: namespace,
 			Name:      strconv.Itoa(port),
-			Address:   dd.address + ":" + strconv.Itoa(port),
+			Addresses: []string{dd.address + ":" + strconv.Itoa(port)},
 		})
 	}
 	// mapping by priority
 	if idx := findRootPort(dd.ports); idx != -1 {
 		services = append(services, core.Service{
 			Namespace: namespace,
-			Address:   services[idx].Address,
+			Addresses: services[idx].Addresses,
 		})
 	}
 	return services
@@ -202,7 +203,7 @@ func (dd *dockerDaemon) buildImage(ctx context.Context, cli client.APIClient) (t
 	logger := internal.LoggerFromContext(ctx)
 	var lastID string
 	for scanner.Scan() {
-		logger.Println("build:", scanner.Text())
+		logger.Debug(scanner.Text())
 
 		var result struct {
 			Stream string `json:"stream"`
@@ -220,7 +221,7 @@ func (dd *dockerDaemon) buildImage(ctx context.Context, cli client.APIClient) (t
 	if err != nil {
 		return types.ImageInspect{}, fmt.Errorf("inspect: %w", err)
 	}
-
+	logger.Info("image built", zap.String("image", lastID))
 	return info, nil
 }
 

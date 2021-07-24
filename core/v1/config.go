@@ -8,6 +8,8 @@ type Config struct {
 	GracefulTimeout     time.Duration // timeout for cleanup
 	TempDir             string        // storage temp dir
 	Driver              string        // volumes driver. Most common - local
+	Domain              string        // root domain name (optional)
+	DisableResolve      bool          // do not try to resolve addresses
 }
 
 func DefaultConfig() Config {

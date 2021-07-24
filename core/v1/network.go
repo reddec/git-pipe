@@ -16,11 +16,12 @@ import (
 
 var ErrNotAssigned = errors.New("alias not assigned for the container")
 
-func NewDockerNetwork(ctx context.Context, cli *client.Client, name string) (*DockerNetwork, error) {
+func NewDockerNetwork(ctx context.Context, cli *client.Client, name string, disableResolve bool) (*DockerNetwork, error) {
 	dn := &DockerNetwork{
-		cli:    cli,
-		name:   name,
-		selfID: internal.ContainerID(),
+		cli:            cli,
+		name:           name,
+		selfID:         internal.ContainerID(),
+		disableResolve: disableResolve,
 	}
 
 	if err := dn.init(ctx, name); err != nil {
@@ -32,10 +33,11 @@ func NewDockerNetwork(ctx context.Context, cli *client.Client, name string) (*Do
 }
 
 type DockerNetwork struct {
-	cli    *client.Client
-	id     string
-	name   string
-	selfID string
+	cli            *client.Client
+	id             string
+	name           string
+	selfID         string
+	disableResolve bool
 
 	cache struct {
 		lock    sync.RWMutex
@@ -75,7 +77,7 @@ func (dn *DockerNetwork) Leave(ctx context.Context, containerID string) error {
 }
 
 func (dn *DockerNetwork) Resolve(ctx context.Context, address string) (string, error) {
-	if dn.insideDocker() {
+	if dn.insideDocker() || dn.disableResolve {
 		return address, nil
 	}
 

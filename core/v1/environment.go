@@ -16,14 +16,14 @@ func New(ctx context.Context, config Config, provider backup.Backup, encryption 
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 
-	network, err := NewDockerNetwork(ctx, cli, config.NetworkName)
+	network, err := NewDockerNetwork(ctx, cli, config.NetworkName, config.DisableResolve)
 	if err != nil {
 		return nil, fmt.Errorf("initialize networking: %w", err)
 	}
 
 	storage := NewVolumeStorage(provider, cli, encryption, config.TempDir, config.Driver)
 	launcher := NewLauncher(config.RetryDeployInterval, config.GracefulTimeout)
-	registry := NewRegistry()
+	registry := NewRegistry(config.Domain)
 	return &Environment{
 		launcher: launcher,
 		network:  network,

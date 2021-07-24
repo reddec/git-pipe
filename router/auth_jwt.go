@@ -7,6 +7,7 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/reddec/git-pipe/internal"
+	"go.uber.org/zap"
 )
 
 const (
@@ -26,7 +27,7 @@ type JWTClaims struct {
 // Sets HeaderUser to the request object in case of success.
 func JWT(sharedKey string) RouteHandler {
 	return RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *Route) error {
-		logger := internal.LoggerFromContext(request.Context())
+		logger := internal.LoggerFromContext(request.Context()).Named("jwt")
 		token := getToken(request)
 		if token == "" {
 			http.Error(writer, "token malformed", http.StatusUnauthorized)
@@ -42,29 +43,30 @@ func JWT(sharedKey string) RouteHandler {
 
 		if err != nil {
 			http.Error(writer, "", http.StatusUnauthorized)
-			logger.Println("authorization failed:", err, "client:", request.RemoteAddr)
+			logger.Info("authorization failed", zap.Error(err))
 			return ErrAbort
 		}
 
 		meta, ok := info.Claims.(*JWTClaims)
 		if !ok {
 			http.Error(writer, "", http.StatusUnauthorized)
-			logger.Println("claims failed:", err, "client:", request.RemoteAddr, "aud:", meta.Audience)
+			logger.Info("claims base validate failed")
 			return ErrAbort
 		}
 		if meta.Audience == "" {
 			http.Error(writer, "", http.StatusUnauthorized)
-			logger.Println("audience not set")
+			logger.Info("audience not set")
 			return ErrAbort
 		}
-		if meta.Subject != "" && !strings.EqualFold(route.Group, meta.Subject) {
+		logger = logger.With(zap.String("audience", meta.Audience), zap.String("subject", meta.Subject), zap.Strings("methods", meta.Methods))
+		if meta.Subject != "" && !strings.EqualFold(route.Service.Namespace, meta.Subject) {
 			http.Error(writer, "", http.StatusForbidden)
-			logger.Println("subject not allowed:", err, "client:", request.RemoteAddr, "aud:", meta.Audience, "group:", route.Group, "allowed:", meta.Subject)
+			logger.Info("namespace not allowed for the subject")
 			return ErrAbort
 		}
 		if len(meta.Methods) > 0 && !containsFold(meta.Methods, request.Method) {
 			http.Error(writer, "", http.StatusForbidden)
-			logger.Println("method not allowed:", err, "client:", request.RemoteAddr, "aud:", meta.Audience, "method:", request.Method, "allowed:", meta.Methods)
+			logger.Info("method not allowed")
 			return ErrAbort
 		}
 		request.Header.Set(HeaderUser, meta.Audience)

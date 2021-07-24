@@ -17,6 +17,7 @@ require (
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/stretchr/testify v1.7.0
+	go.uber.org/zap v1.18.1 // indirect
 	golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
 	google.golang.org/grpc v1.38.0 // indirect

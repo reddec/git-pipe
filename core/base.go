@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/reddec/git-pipe/internal"
+	"go.uber.org/zap"
 )
 
 // FuncDaemon is convenient wrapper for single function as daemon.
@@ -36,10 +37,10 @@ func FuncTimer(interval time.Duration, handler func(ctx context.Context, environ
 	return FuncDaemon(func(ctx context.Context, environment DaemonEnvironment) error {
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		logger := internal.LoggerFromContext(ctx)
+		logger := internal.LoggerFromContext(ctx).Named("timer")
 		for {
 			if err := handler(ctx, environment); err != nil {
-				logger.Println("attempt failed:", err)
+				logger.Warn("attempt failed", zap.Error(err))
 			}
 			select {
 			case <-t.C:

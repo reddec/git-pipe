@@ -75,7 +75,7 @@ CMD ["-listen", ":80", "-text", "hello"]
 	srv, err := env.Registry().Find("example-srv", "")
 	require.NoError(t, err)
 
-	address, err := env.Network().Resolve(ctx, srv.Address)
+	address, err := env.Network().Resolve(ctx, srv.Address())
 	require.NoError(t, err)
 
 	t.Log(address)

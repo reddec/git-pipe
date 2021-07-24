@@ -71,7 +71,7 @@ func New(ctx context.Context, cfg Config) (*Manager, error) {
 
 	return &Manager{
 		config:   cfg,
-		router:   &router.Router{},
+		router:   &router.router{},
 		backup:   &nobackup.NoBackup{},
 		cryptor:  &noecnryption.NoEncryption{},
 		registry: &noregister.NoRegister{},
@@ -106,7 +106,7 @@ func (cfg Config) createNetwork(ctx context.Context) (string, error) {
 type Manager struct {
 	config   Config
 	network  packs.Network
-	router   *router.Router
+	router   *router.router
 	backup   backup.Backup
 	registry dns.DNS
 	cryptor  cryptor.Cryptor
@@ -120,7 +120,7 @@ func (mgt *Manager) Network() packs.Network {
 }
 
 // Router for requests.
-func (mgt *Manager) Router(router *router.Router) {
+func (mgt *Manager) Router(router *router.router) {
 	mgt.router = router
 }
 

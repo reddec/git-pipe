@@ -2,9 +2,11 @@ package v1
 
 import (
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/reddec/git-pipe/core"
+	"go.uber.org/zap"
 )
 
 var (
@@ -13,15 +15,17 @@ var (
 	ErrServiceDomainAlreadyUsed = errors.New("service domain already used")
 )
 
-func NewRegistry() core.Registry {
+func NewRegistry(rootDomain string) core.Registry {
 	return &registry{
 		namespaces: map[string]*namespace{},
 		byDomain:   map[string]core.Service{},
+		rootDomain: rootDomain,
 	}
 }
 
 type registry struct {
 	lock       sync.RWMutex
+	rootDomain string
 	namespaces map[string]*namespace
 	byDomain   map[string]core.Service
 	listeners  map[core.RegistryEventStream]chan core.RegistryEventMessage
@@ -30,6 +34,10 @@ type registry struct {
 type namespace struct {
 	name     string
 	services map[string]core.Service
+}
+
+func (reg *registry) Domain() string {
+	return reg.rootDomain
 }
 
 func (reg *registry) Subscribe(buffer int, replay bool) core.RegistryEventStream {
@@ -108,6 +116,7 @@ func (reg *registry) Find(namespace, name string) (core.Service, error) {
 }
 
 func (reg *registry) Lookup(domain string) (core.Service, error) {
+	domain = reg.normalizeDomain(domain)
 	reg.lock.RLock()
 	defer reg.lock.RUnlock()
 
@@ -137,7 +146,7 @@ func (reg *registry) notify(event core.RegistryEvent, service core.Service) {
 		select {
 		case ch <- msg:
 		default:
-			// notify about overflow
+			zap.L().Warn("overflow events in registry")
 		}
 	}
 }
@@ -156,8 +165,16 @@ func (reg *registry) replay(to chan core.RegistryEventMessage) {
 }
 
 func (reg *registry) getDomain(srv core.Service) string {
-	if srv.Domain != "" {
-		return srv.Domain
+	var zone = srv.Domain
+	if srv.Domain == "" {
+		zone = srv.Name + "." + srv.Namespace
 	}
-	return srv.Name + "." + srv.Namespace
+	return reg.normalizeDomain(zone)
+}
+
+func (reg *registry) normalizeDomain(domain string) string {
+	if reg.rootDomain != "" && !strings.HasSuffix(domain, "."+reg.rootDomain) {
+		domain += "." + reg.rootDomain
+	}
+	return domain
 }

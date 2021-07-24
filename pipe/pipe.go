@@ -71,7 +71,7 @@ type pipe struct {
 	cryptoProvider   cryptor.Cryptor
 	backupProvider   backup.Backup
 	dnsProvider      dns.DNS
-	routerProvider   *router.Router
+	routerProvider   *router.router
 	readyCh          chan<- remote.Source
 	network          packs.Network
 }

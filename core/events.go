@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+
+	"go.uber.org/zap"
 )
 
 //go:generate stringer -type LauncherEvent
@@ -44,10 +46,10 @@ func WaitForLauncherEventContext(ctx context.Context, events <-chan LauncherEven
 	}
 }
 
-func LogEvents(logger interface{ Println(...interface{}) }, events <-chan LauncherEventMessage) {
+func LogEvents(logger *zap.Logger, events <-chan LauncherEventMessage) {
 	go func() {
 		for event := range events {
-			logger.Println("(event)", "daemon:", event.Daemon, "err:", event.Error, "event:", event.Event)
+			logger.Info("new event", zap.String("daemon", event.Daemon), zap.Error(event.Error), zap.String("event", event.Event.String()))
 		}
 	}()
 }
