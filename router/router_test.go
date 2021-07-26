@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/reddec/git-pipe/backup/nobackup"
 	"github.com/reddec/git-pipe/core"
 	v1 "github.com/reddec/git-pipe/core/v1"
@@ -177,124 +178,144 @@ func TestRequest(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
-//
-//func TestJWT(t *testing.T) {
-//	t.Run("valid token should work", func(t *testing.T) {
-//		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"aud": "client1"}).SignedString([]byte("qwerty"))
-//		require.NoError(t, err)
-//		assert.NotEmpty(t, token)
-//
-//		rt := router.New(router.Config{})
-//
-//		rt.Update("test", []packs.Service{
-//			{
-//				Group:  "my-repo",
-//				Name:   "app",
-//				Domain: "app.example.com",
-//			},
-//		})
-//		rt.Handle(router.JWT("qwerty"))
-//		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
-//			assert.Equal(t, "client1", request.Header.Get(router.HeaderUser))
-//			return nil
-//		}))
-//
-//		t.Run("token in header", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
-//			rq.Header.Set("Authorization", "Bearer "+token)
-//			rt.ServeHTTP(rr, rq)
-//
-//			if !assert.Equal(t, http.StatusOK, rr.Code) {
-//				t.Log(rr.Body.String())
-//			}
-//		})
-//		t.Run("token in query", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z?token="+token, nil)
-//			rt.ServeHTTP(rr, rq)
-//
-//			if !assert.Equal(t, http.StatusOK, rr.Code) {
-//				t.Log(rr.Body.String())
-//			}
-//		})
-//
-//	})
-//
-//	t.Run("restrict domain", func(t *testing.T) {
-//		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-//			"aud": "client1",
-//			"sub": "my-repo",
-//		}).SignedString([]byte("qwerty"))
-//		require.NoError(t, err)
-//		assert.NotEmpty(t, token)
-//
-//		rt := router.New(router.Config{})
-//
-//		rt.Update("test", []packs.Service{
-//			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
-//			{Group: "my-repo-2", Name: "app2", Domain: "app2.example.com"},
-//		})
-//		rt.Handle(router.JWT("qwerty"))
-//		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
-//			return nil
-//		}))
-//
-//		t.Run("ok with allowed", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
-//			rq.Header.Set("Authorization", "Bearer "+token)
-//			rt.ServeHTTP(rr, rq)
-//
-//			if !assert.Equal(t, http.StatusOK, rr.Code) {
-//				t.Log(rr.Body.String())
-//			}
-//		})
-//		t.Run("no-no for another", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodGet, "https://app2.example.com/x/y/z", nil)
-//			rq.Header.Set("Authorization", "Bearer "+token)
-//			rt.ServeHTTP(rr, rq)
-//
-//			assert.Equal(t, http.StatusForbidden, rr.Code)
-//		})
-//	})
-//
-//	t.Run("restrict method", func(t *testing.T) {
-//		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-//			"aud":     "client1",
-//			"methods": []string{"POST"},
-//		}).SignedString([]byte("qwerty"))
-//		require.NoError(t, err)
-//		assert.NotEmpty(t, token)
-//
-//		rt := router.New(router.Config{})
-//
-//		rt.Update("test", []packs.Service{
-//			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
-//		})
-//		rt.Handle(router.JWT("qwerty"))
-//		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
-//			return nil
-//		}))
-//
-//		t.Run("ok with POST", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodPost, "https://app.example.com/x/y/z", nil)
-//			rq.Header.Set("Authorization", "Bearer "+token)
-//			rt.ServeHTTP(rr, rq)
-//
-//			if !assert.Equal(t, http.StatusOK, rr.Code) {
-//				t.Log(rr.Body.String())
-//			}
-//		})
-//		t.Run("no-no for another", func(t *testing.T) {
-//			rr := httptest.NewRecorder()
-//			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
-//			rq.Header.Set("Authorization", "Bearer "+token)
-//			rt.ServeHTTP(rr, rq)
-//
-//			assert.Equal(t, http.StatusForbidden, rr.Code)
-//		})
-//	})
-//}
+func TestJWT(t *testing.T) {
+	t.Run("valid token should work", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"aud": "client1"}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		ctx := context.Background()
+		env, err := v1.New(ctx, v1.DefaultConfig(), &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
+		require.NoError(t, err)
+		go env.Run(ctx)
+
+		rt := router.NewHTTPServer(ctx, router.Config{}, env, router.JWT("qwerty"), router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			assert.Equal(t, "client1", request.Header.Get(router.HeaderUser))
+			return router.ErrAbort
+		}))
+
+		err = env.Registry().Register(core.Service{
+			Namespace: "my-repo",
+			Name:      "app",
+			Domain:    "app.example.com",
+		})
+		require.NoError(t, err)
+
+		t.Run("token in header", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("token in query", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z?token="+token, nil)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+
+	})
+
+	t.Run("restrict domain", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"aud": "client1",
+			"sub": "my-repo",
+		}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		ctx := context.Background()
+		env, err := v1.New(ctx, v1.DefaultConfig(), &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
+		require.NoError(t, err)
+		go env.Run(ctx)
+
+		err = env.Registry().Register(core.Service{
+			Namespace: "my-repo",
+			Name:      "app",
+			Domain:    "app.example.com",
+		})
+		require.NoError(t, err)
+
+		err = env.Registry().Register(core.Service{
+			Namespace: "my-repo-2",
+			Name:      "app2",
+			Domain:    "app2.example.com",
+		})
+		require.NoError(t, err)
+
+		rt := router.NewHTTPServer(ctx, router.Config{}, env, router.JWT("qwerty"), router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			return router.ErrAbort
+		}))
+
+		t.Run("ok with allowed", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("no-no for another", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app2.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+		})
+	})
+
+	t.Run("restrict method", func(t *testing.T) {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"aud":     "client1",
+			"methods": []string{"POST"},
+		}).SignedString([]byte("qwerty"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, token)
+
+		ctx := context.Background()
+		env, err := v1.New(ctx, v1.DefaultConfig(), &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
+		require.NoError(t, err)
+		go env.Run(ctx)
+
+		rt := router.NewHTTPServer(ctx, router.Config{}, env, router.JWT("qwerty"), router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+			assert.Equal(t, "client1", request.Header.Get(router.HeaderUser))
+			return router.ErrAbort
+		}))
+
+		err = env.Registry().Register(core.Service{
+			Namespace: "my-repo",
+			Name:      "app",
+			Domain:    "app.example.com",
+		})
+		require.NoError(t, err)
+
+		t.Run("ok with POST", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodPost, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			if !assert.Equal(t, http.StatusOK, rr.Code) {
+				t.Log(rr.Body.String())
+			}
+		})
+		t.Run("no-no for another", func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+			rq.Header.Set("Authorization", "Bearer "+token)
+			rt.Handler.ServeHTTP(rr, rq)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+		})
+	})
+}
