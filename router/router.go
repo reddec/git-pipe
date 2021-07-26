@@ -54,23 +54,48 @@ func New(cfg Config, handlers ...RouteHandler) core.Daemon {
 }
 
 func plainServer(cfg Config, handlers ...RouteHandler) core.Daemon {
-	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) error {
+	return core.FuncDaemon(func(global context.Context, environment core.DaemonEnvironment) error {
+		ctx, cancel := context.WithCancel(global)
+		defer cancel()
 		server := NewHTTPServer(ctx, cfg, environment.Global(), handlers...)
+
+		go func() {
+			<-ctx.Done()
+			if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				internal.LoggerFromContext(global).Warn("close failed", zap.Error(err))
+			}
+		}()
+
 		environment.Ready()
 		return server.ListenAndServe()
 	})
 }
 
 func tlsServer(cfg Config, handlers ...RouteHandler) core.Daemon {
-	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) error {
+	panic("TODO: implement") // TODO:
+	return core.FuncDaemon(func(global context.Context, environment core.DaemonEnvironment) error {
+		ctx, cancel := context.WithCancel(global)
+		defer cancel()
+
 		server := NewHTTPServer(ctx, cfg, environment.Global(), handlers...)
+
+		go func() {
+			<-ctx.Done()
+			if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				internal.LoggerFromContext(ctx).Warn("close failed", zap.Error(err))
+			}
+		}()
+
 		environment.Ready()
 		return server.ListenAndServe()
 	})
 }
 
 func autoTLSServer(cfg Config, handlers ...RouteHandler) core.Daemon {
-	return core.FuncDaemon(func(ctx context.Context, environment core.DaemonEnvironment) error {
+	return core.FuncDaemon(func(global context.Context, environment core.DaemonEnvironment) error {
+		ctx, cancel := context.WithCancel(global)
+		defer cancel()
+
 		server := NewHTTPServer(ctx, cfg, environment.Global(), handlers...)
 		manager := &autocert.Manager{
 			Prompt: autocert.AcceptTOS,
@@ -87,6 +112,14 @@ func autoTLSServer(cfg Config, handlers ...RouteHandler) core.Daemon {
 		listener := manager.Listener()
 
 		environment.Ready()
+
+		go func() {
+			<-ctx.Done()
+			if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				internal.LoggerFromContext(ctx).Warn("close failed", zap.Error(err))
+			}
+		}()
+
 		return server.Serve(listener)
 	})
 }

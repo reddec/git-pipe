@@ -19,6 +19,7 @@ func NewRegistry(rootDomain string) core.Registry {
 	return &registry{
 		namespaces: map[string]*namespace{},
 		byDomain:   map[string]core.Service{},
+		listeners:  map[core.RegistryEventStream]chan core.RegistryEventMessage{},
 		rootDomain: rootDomain,
 	}
 }
@@ -167,7 +168,10 @@ func (reg *registry) replay(to chan core.RegistryEventMessage) {
 func (reg *registry) getDomain(srv core.Service) string {
 	var zone = srv.Domain
 	if srv.Domain == "" {
-		zone = srv.Name + "." + srv.Namespace
+		zone = srv.Namespace
+	}
+	if srv.Name != "" {
+		zone = srv.Name + "." + zone
 	}
 	return reg.normalizeDomain(zone)
 }

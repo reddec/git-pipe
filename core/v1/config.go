@@ -20,3 +20,31 @@ func DefaultConfig() Config {
 		Driver:              "local",
 	}
 }
+
+func NewConfig(options ...Option) Config {
+	cfg := DefaultConfig()
+	for _, opt := range options {
+		opt(&cfg)
+	}
+	return cfg
+}
+
+type Option func(cfg *Config)
+
+func Network(name string) Option {
+	return func(cfg *Config) {
+		cfg.NetworkName = name
+	}
+}
+
+func NoResolve() Option {
+	return func(cfg *Config) {
+		cfg.DisableResolve = true
+	}
+}
+
+func Domain(name string) Option {
+	return func(cfg *Config) {
+		cfg.Domain = name
+	}
+}

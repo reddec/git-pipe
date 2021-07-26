@@ -6,23 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/reddec/git-pipe/backup"
 	"github.com/reddec/git-pipe/backup/filebackup"
 	"github.com/reddec/git-pipe/backup/nobackup"
 	"github.com/reddec/git-pipe/backup/objectstore"
+	"github.com/reddec/git-pipe/core"
+	v1 "github.com/reddec/git-pipe/core/v1"
 	"github.com/reddec/git-pipe/cryptor/symmetric"
 	"github.com/reddec/git-pipe/dns"
 	"github.com/reddec/git-pipe/dns/cf"
-	"github.com/reddec/git-pipe/internal"
 	"github.com/reddec/git-pipe/pipe"
 	"github.com/reddec/git-pipe/remote/git"
 	"github.com/reddec/git-pipe/router"
@@ -77,47 +75,61 @@ func (cmd *CommandRun) Execute([]string) error {
 		cmd.Router.Domain = name
 	}
 
-	manager, err := pipe.New(global, pipe.Config{
-		Network:   cmd.Network,
-		Directory: cmd.Output,
-		FQDN:      cmd.FQDN,
-		Poll:      cmd.Interval,
-		Shutdown:  cmd.GracefulShutdown,
-		Backup:    cmd.BackupInterval,
-		Domain:    cmd.Router.domain(),
-	})
-
-	if err != nil {
-		return fmt.Errorf("create manager: %w", err)
-	}
-
 	ctx, cancel := context.WithCancel(global)
 	defer cancel()
 
-	if err := cmd.addBackup(manager); err != nil {
-		return fmt.Errorf("setup backup: %w", err)
+	storage, err := cmd.createBackupProvider()
+	if err != nil {
+		return fmt.Errorf("initialize storage: %w", err)
 	}
 
-	if err := cmd.addDNSProvider(ctx, manager); err != nil {
-		return fmt.Errorf("setup DNS provider: %w", err)
+	encryption := &symmetric.Symmetric{Key: cmd.BackupKey}
+
+	cfg := v1.DefaultConfig()
+	cfg.Domain = cmd.Router.Domain
+	cfg.NetworkName = cmd.Network
+	cfg.GracefulTimeout = cmd.GracefulShutdown
+	cfg.RetryDeployInterval = cmd.GracefulShutdown
+
+	env, err := v1.NewBackground(ctx, cfg, storage, encryption)
+	if err != nil {
+		return fmt.Errorf("create env: %w", err)
 	}
 
-	env, err := cmd.environment()
+	defer env.Stop()
+
+	if cmd.Provider != "" {
+		if d, err := cmd.createDNSProvider(ctx); err != nil {
+			return fmt.Errorf("create DNS: %w", err)
+		} else if err := env.Launcher().Launch(ctx, core.Descriptor{
+			Name:   "@dns-provider",
+			Daemon: dns.Daemonize(d),
+		}); err != nil {
+			return fmt.Errorf("launch DNS provider: %w", err)
+		}
+	}
+
+	environ, err := cmd.environment()
 	if err != nil {
 		return fmt.Errorf("read environment: %w", err)
 	}
 
-	manager.Encrypt(&symmetric.Symmetric{Key: cmd.BackupKey})
-
-	var wg multierror.Group
-
 	if !cmd.Router.Dummy {
-		wg.Go(func() error {
-			defer cancel()
-			if err := cmd.runRouter(ctx, manager); err == nil || errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			return err
+		var handlers []router.RouteHandler
+		if cmd.Router.JWT != "" {
+			handlers = append(handlers, router.JWT(cmd.Router.JWT))
+		}
+
+		_ = env.Launcher().Launch(ctx, core.Descriptor{
+			Name: "@router",
+			Daemon: router.New(router.Config{
+				Bind:        cmd.Router.Bind,
+				AutoTLS:     cmd.Router.AutoTLS,
+				TLS:         cmd.Router.TLS,
+				SSLDir:      cmd.Router.SSLDir,
+				NoIndex:     cmd.Router.NoIndex,
+				PathRouting: cmd.Router.PathRouting,
+			}),
 		})
 	}
 
@@ -127,86 +139,19 @@ func (cmd *CommandRun) Execute([]string) error {
 			return fmt.Errorf("load repo %s: %w", repo, err)
 		}
 
-		wg.Go(func() error {
-			defer cancel()
-			err := manager.Run(ctx, source, filterEnvironment(env, manager.Name(source.Ref())))
-			if err != nil {
-				return fmt.Errorf("run manager: %w", err)
-			}
-			return nil
+		name := pipe.Name(source.Ref(), cmd.FQDN)
+		d := pipe.Poller(source, cmd.Interval, cmd.BackupInterval, cmd.FQDN, cmd.Output, filterEnvironment(environ, name))
+		err = env.Launcher().Launch(ctx, core.Descriptor{
+			Name:   name,
+			Daemon: d,
 		})
-	}
-
-	if err := wg.Wait().ErrorOrNil(); err != nil {
-		return fmt.Errorf("run: %w", err)
-	}
-	return nil
-}
-
-func (cmd CommandRun) addBackup(manager *pipe.Manager) error {
-	backuper, err := cmd.backupProvider()
-	if err != nil {
-		return fmt.Errorf("create backup provider: %w", err)
-	}
-
-	manager.Backup(backuper)
-	return nil
-}
-
-func (cmd CommandRun) addDNSProvider(ctx context.Context, manager *pipe.Manager) error {
-	if cmd.Provider == "" {
-		return nil
-	}
-	p, err := cmd.createDNSProvider(ctx)
-	if err != nil {
-		return fmt.Errorf("create provider: %w", err)
-	}
-	manager.DNS(p)
-	return nil
-}
-
-func (cmd CommandRun) runRouter(ctx context.Context, manager *pipe.Manager) error {
-	logger := internal.LoggerFromContext(ctx)
-	port, err := cmd.port()
-	if err != nil {
-		return fmt.Errorf("get port: %w", err)
-	}
-	proxy := router.New(router.Config{
-		Index: !cmd.Router.NoIndex,
-		Port:  port,
-	})
-	if cmd.Router.JWT != "" {
-		proxy.Handle(router.JWT(cmd.Router.JWT))
-		logger.Println("JWT authorization enabled")
-	}
-	proxy.Handle(&router.Random{})
-	manager.Router(proxy)
-
-	var listener net.Listener
-	if cmd.Router.AutoTLS {
-		listener = cmd.createAutoTLSListener(proxy)
-		cmd.Router.TLS = false
-	} else {
-		listener, err = net.Listen("tcp", cmd.Router.Bind)
 		if err != nil {
-			return fmt.Errorf("create listener: %w", err)
+			return fmt.Errorf("launch %s: %w", name, err)
 		}
 	}
-	defer listener.Close()
 
-	srv := &http.Server{Addr: cmd.Router.Bind, Handler: proxy}
-
-	child, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go func() {
-		<-child.Done()
-		_ = srv.Close()
-	}()
-	if cmd.Router.TLS {
-		return srv.ServeTLS(listener, filepath.Join(cmd.Router.SSLDir, "server.crt"), filepath.Join(cmd.Router.SSLDir, "server.key"))
-	}
-	return srv.Serve(listener)
+	env.Wait()
+	return nil
 }
 
 var (
@@ -214,7 +159,7 @@ var (
 	errUnknownBackupProtocol = errors.New("unknown backup protocol")
 )
 
-func (cmd CommandRun) backupProvider() (backup.Backup, error) {
+func (cmd CommandRun) createBackupProvider() (backup.Backup, error) {
 	if cmd.Backup == "" || cmd.Backup == "none" {
 		return &nobackup.NoBackup{}, nil
 	}
@@ -244,23 +189,6 @@ func (cmd CommandRun) createDNSProvider(ctx context.Context) (dns.DNS, error) {
 	default:
 		return nil, errUnknownProvider
 	}
-}
-
-func (cmd CommandRun) port() (int, error) {
-	const TLSPort = 443
-
-	if cmd.Router.AutoTLS {
-		return TLSPort, nil
-	}
-	_, port, err := net.SplitHostPort(cmd.Router.Bind)
-	if err != nil {
-		return 0, fmt.Errorf("split binding address to host and port: %w", err)
-	}
-	value, err := strconv.Atoi(port)
-	if err != nil {
-		return 0, fmt.Errorf("parse port: %w", err)
-	}
-	return value, nil
 }
 
 var errUnknownDomain = errors.New("unknown domain")

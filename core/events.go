@@ -6,7 +6,7 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:generate stringer -type LauncherEvent
+//go:generate stringer -type LauncherEvent -trimprefix LauncherEvent
 type LauncherEvent int
 
 const (
@@ -46,6 +46,16 @@ func WaitForLauncherEventContext(ctx context.Context, events <-chan LauncherEven
 	}
 }
 
+func WaitForEvent(ctx context.Context, launcher Launcher, daemon string, mask LauncherEvent) bool {
+	subs, err := launcher.Subscribe(ctx, 1024, true)
+	if err != nil {
+		return false
+	}
+	defer launcher.Unsubscribe(ctx, subs)
+
+	return WaitForLauncherEventContext(ctx, subs, daemon, mask)
+}
+
 func LogEvents(logger *zap.Logger, events <-chan LauncherEventMessage) {
 	go func() {
 		for event := range events {
@@ -54,6 +64,7 @@ func LogEvents(logger *zap.Logger, events <-chan LauncherEventMessage) {
 	}()
 }
 
+//go:generate stringer -type RegistryEvent -trimprefix RegistryEvent
 type RegistryEvent int
 
 const (

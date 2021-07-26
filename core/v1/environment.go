@@ -23,11 +23,11 @@ func New(ctx context.Context, config Config, provider backup.Backup, encryption 
 
 	storage := NewVolumeStorage(provider, cli, encryption, config.TempDir, config.Driver)
 	launcher := NewLauncher(config.RetryDeployInterval, config.GracefulTimeout)
-	registry := NewRegistry(config.Domain)
+	reg := NewRegistry(config.Domain)
 	return &Environment{
 		launcher: launcher,
 		network:  network,
-		registry: registry,
+		registry: reg,
 		storage:  storage,
 		client:   cli,
 	}, nil
@@ -67,4 +67,43 @@ func (env *Environment) Run(ctx context.Context) {
 
 func (env *Environment) Close() error {
 	return env.client.Close()
+}
+
+type BackgroundEnvironment struct {
+	done   chan struct{}
+	finish func()
+	core.Environment
+}
+
+func NewBackground(ctx context.Context, config Config, provider backup.Backup, encryption cryptor.Cryptor) (*BackgroundEnvironment, error) {
+	env, err := New(ctx, config, provider, encryption)
+	if err != nil {
+		return nil, err
+	}
+
+	child, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		defer env.Close()
+		defer cancel()
+
+		env.Run(child)
+	}()
+
+	return &BackgroundEnvironment{
+		done:        done,
+		finish:      cancel,
+		Environment: env,
+	}, nil
+}
+
+func (be *BackgroundEnvironment) Wait() {
+	<-be.done
+}
+
+func (be *BackgroundEnvironment) Stop() {
+	be.finish()
+	<-be.done
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/internal"
+	"go.uber.org/zap"
 )
 
 func NewLauncher(retryDeployInterval, cleanupTimeout time.Duration) *Launcher {
@@ -65,13 +66,14 @@ func (run *Launcher) Remove(ctx context.Context, daemon string) error {
 	}
 }
 
-func (run *Launcher) Run(ctx context.Context, environment core.Environment) {
+func (run *Launcher) Run(global context.Context, environment core.Environment) {
 	if !atomic.CompareAndSwapInt32(&run.isRunning, 0, 1) {
 		// fool proof
 		return
 	}
 	defer atomic.StoreInt32(&run.isRunning, 0)
-
+	logger := internal.SubLogger(global, "launcher")
+	ctx := internal.WithLogger(global, logger)
 LOOP:
 	for {
 		select {
@@ -97,9 +99,10 @@ LOOP:
 			}
 		}
 	}
-
+	logger.Info("finalizing")
 	// request all daemons to finish
-	for _, d := range run.deployed {
+	for name, d := range run.deployed {
+		logger.Info("requesting daemon to finish", zap.String("daemon", name))
 		d.stop()
 	}
 
@@ -108,6 +111,7 @@ LOOP:
 		select {
 		case name := <-run.finished:
 			delete(run.deployed, name)
+			logger.Info("daemon finished", zap.String("daemon", name), zap.Int("running", len(run.deployed)))
 		case event := <-run.events:
 			run.distributeEvent(event)
 		case ch := <-run.toUnsubscribe:
@@ -117,7 +121,7 @@ LOOP:
 			}
 		}
 	}
-
+	logger.Info("cleaning up subscribers")
 	// cleanup events listeners
 	for _, ch := range run.subscribers {
 		close(ch)

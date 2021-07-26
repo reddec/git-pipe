@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -21,16 +22,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func New(directory string, env map[string]string) core.Daemon {
+func New(directory string, env map[string]string, backup time.Duration) core.Daemon {
 	return &dockerDaemon{
 		env:       env,
 		directory: directory,
+		backup:    backup,
 	}
 }
 
 type dockerDaemon struct {
 	env       map[string]string
 	directory string
+	backup    time.Duration
 
 	image       types.ImageInspect
 	containerID string
@@ -79,6 +82,7 @@ func (dd *dockerDaemon) Create(ctx context.Context, environment core.DaemonEnvir
 
 func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironment) error {
 	// TODO: implement lazy start here
+	logger := internal.LoggerFromContext(ctx)
 	err := environment.Global().Docker().ContainerStart(ctx, dd.containerID, types.ContainerStartOptions{})
 	if err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -102,7 +106,19 @@ func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironm
 	}
 	environment.Ready()
 
-	<-ctx.Done()
+	backup := time.NewTicker(dd.backup)
+	defer backup.Stop()
+LOOP:
+	for {
+		select {
+		case <-backup.C:
+		case <-ctx.Done():
+			break LOOP
+		}
+		if err := environment.Global().Storage().Backup(ctx, environment.Name(), dd.volumes); err != nil {
+			logger.Warn("failed to backup", zap.Error(err))
+		}
+	}
 
 	for _, srv := range dd.services {
 		environment.Global().Registry().Unregister(srv.Namespace, srv.Name)
