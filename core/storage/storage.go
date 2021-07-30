@@ -1,4 +1,4 @@
-package v1
+package storage
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -16,15 +17,21 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/reddec/git-pipe/backup"
 	"github.com/reddec/git-pipe/cryptor"
+	"github.com/reddec/git-pipe/internal"
 )
 
-func NewVolumeStorage(provider backup.Backup, cli *client.Client, encryption cryptor.Cryptor, tempDir string, driver string) *VolumeStorage {
+func Default(provider backup.Backup, cli *client.Client, encryption cryptor.Cryptor) *VolumeStorage {
+	return New(provider, cli, encryption, "", "local", time.Hour)
+}
+
+func New(provider backup.Backup, cli *client.Client, encryption cryptor.Cryptor, tempDir string, driver string, interval time.Duration) *VolumeStorage {
 	return &VolumeStorage{
 		cli:        cli,
 		provider:   provider,
 		encryption: encryption,
 		tempDir:    tempDir,
 		driver:     driver,
+		interval:   interval,
 	}
 }
 
@@ -34,6 +41,7 @@ type VolumeStorage struct {
 	encryption cryptor.Cryptor
 	tempDir    string
 	driver     string
+	interval   time.Duration
 }
 
 func (sw *VolumeStorage) Restore(ctx context.Context, name string, volumeNames []string) error {
@@ -108,14 +116,20 @@ func (sw *VolumeStorage) Backup(ctx context.Context, name string, volumeNames []
 	return nil
 }
 
+func (sw *VolumeStorage) Schedule(ctx context.Context, name string, volumeNames []string) *internal.Task {
+	return internal.Timer(ctx, sw.interval, func(ctx context.Context) error {
+		return sw.Backup(ctx, name, volumeNames)
+	})
+}
+
 func (sw *VolumeStorage) copyVolumesToArchive(ctx context.Context, volumeNames []string, targetFile string) error {
 	var mounts = make([]mount.Mount, 0, len(volumeNames)+1)
 
-	for _, volume := range volumeNames {
+	for _, volumeName := range volumeNames {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeVolume,
-			Source:   volume,
-			Target:   "/mnt/" + volume,
+			Source:   volumeName,
+			Target:   "/mnt/" + volumeName,
 			ReadOnly: true,
 		})
 	}

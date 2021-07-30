@@ -44,6 +44,11 @@ func (prc *Process) Text(data string) *Process {
 	return prc
 }
 
+func (prc *Process) Input(data []byte) *Process {
+	prc.cmd.Stdin = bytes.NewReader(data)
+	return prc
+}
+
 func (prc *Process) Output() (string, error) {
 	output := StreamingLogger(prc.logger)
 	defer output.Close()

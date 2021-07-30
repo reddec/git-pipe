@@ -17,7 +17,7 @@ func StreamingLogger(logger *zap.Logger) io.WriteCloser {
 
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			logger.Info(scanner.Text())
+			logger.Debug(scanner.Text())
 		}
 	}()
 

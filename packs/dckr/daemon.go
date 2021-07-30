@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -19,169 +17,178 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/reddec/git-pipe/core"
 	"github.com/reddec/git-pipe/internal"
+	"github.com/reddec/git-pipe/packs"
 	"go.uber.org/zap"
 )
 
-func New(directory string, env map[string]string, backup time.Duration) core.Daemon {
-	return &dockerDaemon{
-		env:       env,
-		directory: directory,
-		backup:    backup,
-	}
-}
+func Run(ctx context.Context, env *core.Environment) error {
+	logger := internal.SubLogger(ctx, "docker")
+	ctx = internal.WithLogger(ctx, logger)
 
-type dockerDaemon struct {
-	env       map[string]string
-	directory string
-	backup    time.Duration
-
-	image       types.ImageInspect
-	containerID string
-	volumes     []string
-	ports       []int
-	address     string
-	services    []core.Service
-}
-
-func (dd *dockerDaemon) Create(ctx context.Context, environment core.DaemonEnvironment) error {
-	if err := dd.cleanupContainers(ctx, environment.Global().Docker(), environment.Name()); err != nil {
+	// Remove old containers if possible
+	logger.Debug("cleaning old containers")
+	if err := cleanupContainers(ctx, env.Docker, env.Name); err != nil {
 		return fmt.Errorf("cleanup: %w", err)
 	}
 
-	image, err := dd.buildImage(ctx, environment.Global().Docker())
+	// Build image from source
+	logger.Debug("building image")
+	image, err := buildImage(ctx, env.Docker, env.Directory)
 	if err != nil {
 		return fmt.Errorf("build image: %w", err)
 	}
 
-	dd.image = image
-	dd.ports = dd.declaredPorts()
-	dd.volumes = dd.declaredVolumes()
-
-	// we are storing all mount points in a single volume with name equal to daemon
-	var volumeName = environment.Name()
-
-	if err := environment.Global().Storage().Restore(ctx, environment.Name(), []string{environment.Name()}); err != nil {
-		return fmt.Errorf("restore volumes: %w", err)
+	// Collect declared mount points
+	var mountPoints = make([]string, 0, len(image.Config.Volumes))
+	for containerPath := range image.Config.Volumes {
+		mountPoints = append(mountPoints, containerPath)
 	}
 
-	containerID, err := dd.createContainer(ctx, environment.Global().Docker(), volumeName, environment.Name())
+	// Collect declared ports
+	var ports = make([]int, 0, len(image.Config.ExposedPorts))
+	for port := range image.Config.ExposedPorts {
+		ports = append(ports, port.Int())
+	}
+
+	// We are storing all mount points in a single volume with name equal to repo
+	var volumes = []string{env.Name}
+
+	// Restore content in volumes
+	logger.Info("restoring volumes", zap.Strings("volumes", volumes))
+	if err := env.Backup.Restore(ctx, env.Name, volumes); err != nil {
+		return fmt.Errorf("restore: %w", err)
+	}
+
+	// Schedule backup
+	logger.Debug("scheduling backup")
+	var backup = env.Backup.Schedule(ctx, env.Name, volumes)
+	defer backup.Stop()
+
+	// Create container
+	logger.Info("creating container")
+	containerID, err := createContainer(ctx, env.Docker, image, volumes[0], env.Name, env.Vars)
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
-	dd.containerID = containerID
+	defer cleanupContainers(context.Background(), env.Docker, env.Name)
 
-	if address, err := environment.Global().Network().Join(ctx, dd.containerID); err != nil {
+	// Attach container to network
+	logger.Debug("joining network")
+	link, err := env.Network.Join(ctx, containerID)
+	if err != nil {
 		return fmt.Errorf("join container to network: %w", err)
-	} else {
-		dd.address = address
 	}
 
-	dd.services = dd.exposedServices(environment.Name())
-	return nil
-}
+	// Automatically detach network so we will clear resolve cache
+	defer env.Network.Leave(context.Background(), containerID)
 
-func (dd *dockerDaemon) Run(ctx context.Context, environment core.DaemonEnvironment) error {
-	// TODO: implement lazy start here
-	logger := internal.LoggerFromContext(ctx)
-	err := environment.Global().Docker().ContainerStart(ctx, dd.containerID, types.ContainerStartOptions{})
+	// Launch container
+	logger.Info("starting container")
+	containerInfo, err := startContainer(ctx, env.Docker, containerID)
 	if err != nil {
 		return fmt.Errorf("start container: %w", err)
 	}
+	defer env.Docker.ContainerStop(context.Background(), containerID, nil)
 
-	info, err := environment.Global().Docker().ContainerInspect(ctx, dd.containerID)
-	if err != nil {
-		return fmt.Errorf("inspect container: %w", err)
-	}
-
-	if info.State.Health != nil {
-		if err := internal.WaitToBeHealthy(ctx, environment.Global().Docker(), dd.containerID, info.Created); err != nil {
+	// Wait for healthy state if needed
+	if containerInfo.State.Health != nil {
+		logger.Info("wait for healthy status")
+		if err := internal.WaitToBeHealthy(ctx, env.Docker, containerID, containerInfo.Created); err != nil {
 			return fmt.Errorf("health checks: %w", err)
 		}
 	}
 
-	for _, srv := range dd.services {
-		if err := environment.Global().Registry().Register(srv); err != nil {
-			return fmt.Errorf("register service %s: %w", srv.Label(), err)
-		}
+	// Register in the ingress
+	addressesByDomains := exposedServices(image, env.Name, link)
+	logger.Debug("register ingress", zap.Int("endpoints_num", len(addressesByDomains)))
+	if err := env.Ingress.Set(ctx, env.Name, addressesByDomains); err != nil {
+		return fmt.Errorf("set ingress: %w", err)
 	}
-	environment.Ready()
+	defer env.Ingress.Clear(context.Background(), env.Name)
 
-	backup := time.NewTicker(dd.backup)
-	defer backup.Stop()
-LOOP:
-	for {
-		select {
-		case <-backup.C:
-		case <-ctx.Done():
-			break LOOP
-		}
-		if err := environment.Global().Storage().Backup(ctx, environment.Name(), dd.volumes); err != nil {
-			logger.Warn("failed to backup", zap.Error(err))
-		}
+	// Register DNS
+	var domains = make([]string, 0, len(addressesByDomains))
+	for domain := range addressesByDomains {
+		domains = append(domains, domain)
+	}
+	logger.Debug("register DNS", zap.Strings("domains", domains))
+	if err := env.DNS.Register(ctx, domains); err != nil {
+		return fmt.Errorf("register DNS: %w", err)
 	}
 
-	for _, srv := range dd.services {
-		environment.Global().Registry().Unregister(srv.Namespace, srv.Name)
-	}
+	// Notify that everything is ready
+	logger.Info("ready")
+	env.Event.Ready()
+
+	// Wait
+	<-ctx.Done()
+	logger.Info("destroying")
 	return nil
 }
 
-func (dd *dockerDaemon) Remove(ctx context.Context, environment core.DaemonEnvironment) error {
-	for _, srv := range dd.services {
-		environment.Global().Registry().Unregister(srv.Namespace, srv.Name)
+func startContainer(ctx context.Context, api client.APIClient, containerID string) (*types.ContainerJSON, error) {
+	err := api.ContainerStart(ctx, containerID, types.ContainerStartOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("start container: %w", err)
 	}
 
-	var all *multierror.Error
-	if dd.containerID != "" {
-		if err := environment.Global().Docker().ContainerStop(ctx, dd.containerID, nil); err != nil && !strings.Contains(err.Error(), "No such") {
-			all = multierror.Append(all, fmt.Errorf("stop container: %w", err))
-		}
-		if err := environment.Global().Network().Leave(ctx, dd.containerID); err != nil {
-			all = multierror.Append(all, fmt.Errorf("unlink container: %w", err))
-		}
+	info, err := api.ContainerInspect(ctx, containerID)
+	if err != nil {
+
+		return nil, fmt.Errorf("inspect container: %w", err)
 	}
-	if err := dd.cleanupContainers(ctx, environment.Global().Docker(), environment.Name()); err != nil {
-		all = multierror.Append(fmt.Errorf("cleanup: %w", err))
-	}
-	return all.ErrorOrNil()
+
+	return &info, nil
 }
 
-func (dd *dockerDaemon) exposedServices(namespace string) []core.Service {
-	var services []core.Service
+func exposedServices(image types.ImageInspect, name string, link string) map[string][]string {
+	addressesByDomain := make(map[string][]string)
+	domainByPort := make(map[int]string)
 	// general services mapped by port: <port>.<name>
-	for _, port := range dd.ports {
-		services = append(services, core.Service{
-			Namespace: namespace,
-			Name:      strconv.Itoa(port),
-			Addresses: []string{dd.address + ":" + strconv.Itoa(port)},
-		})
+	for port := range image.Config.ExposedPorts {
+		if proto := port.Proto(); proto != "" && proto != "tcp" {
+			continue
+		}
+		portValue := port.Port()
+		domain := portValue + "." + name
+		addressesByDomain[domain] = []string{link + ":" + portValue}
+		domainByPort[port.Int()] = domain
 	}
-	// mapping by priority
-	if idx := findRootPort(dd.ports); idx != -1 {
-		services = append(services, core.Service{
-			Namespace: namespace,
-			Addresses: services[idx].Addresses,
-		})
+
+	// get root domain by port priority
+	for _, port := range packs.PortsPriority() {
+		if domain, ok := domainByPort[port]; ok {
+			addressesByDomain[name] = addressesByDomain[domain]
+			break
+		}
 	}
-	return services
+
+	// get any port as root if needed
+	if _, picked := addressesByDomain[name]; !picked {
+		for _, addresses := range addressesByDomain {
+			addressesByDomain[name] = addresses
+			break
+		}
+	}
+	return addressesByDomain
 }
 
-func (dd *dockerDaemon) createContainer(ctx context.Context, cli client.APIClient, volumeName, daemonName string) (string, error) {
-	var mountPoints = make([]mount.Mount, 0, len(dd.volumes))
-	for _, cPath := range dd.volumes {
+func createContainer(ctx context.Context, cli client.APIClient, image types.ImageInspect, volumeName, label string, env map[string]string) (string, error) {
+	var mountPoints = make([]mount.Mount, 0, len(image.Config.Volumes))
+	for pathInContainer := range image.Config.Volumes {
 		mountPoints = append(mountPoints, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: volumeName,
-			Target: cPath,
+			Target: pathInContainer,
 		})
 	}
 
 	res, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: dd.image.ID,
-		Env:   toEnvList(dd.env),
+		Image: image.ID,
+		Env:   toEnvList(env),
 		Labels: map[string]string{
 			"managed-by": "git-pipe",
-			"daemon":     daemonName,
+			"git-pipe":   label,
 		},
 	}, &container.HostConfig{
 		RestartPolicy: container.RestartPolicy{
@@ -197,8 +204,8 @@ func (dd *dockerDaemon) createContainer(ctx context.Context, cli client.APIClien
 	return res.ID, nil
 }
 
-func (dd *dockerDaemon) buildImage(ctx context.Context, cli client.APIClient) (types.ImageInspect, error) {
-	tar, err := archive.TarWithOptions(dd.directory, &archive.TarOptions{})
+func buildImage(ctx context.Context, cli client.APIClient, directory string) (types.ImageInspect, error) {
+	tar, err := archive.TarWithOptions(directory, &archive.TarOptions{})
 	if err != nil {
 		return types.ImageInspect{}, fmt.Errorf("create tar from source dir: %w", err)
 	}
@@ -241,10 +248,10 @@ func (dd *dockerDaemon) buildImage(ctx context.Context, cli client.APIClient) (t
 	return info, nil
 }
 
-func (dd *dockerDaemon) cleanupContainers(ctx context.Context, cli client.APIClient, daemonName string) error {
+func cleanupContainers(ctx context.Context, cli client.APIClient, label string) error {
 	list, err := cli.ContainerList(ctx, types.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "managed-by=git-pipe"), filters.Arg("label", "daemon="+daemonName)),
+		Filters: filters.NewArgs(filters.Arg("label", "managed-by=git-pipe"), filters.Arg("label", "git-pipe="+label)),
 	})
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
@@ -260,53 +267,6 @@ func (dd *dockerDaemon) cleanupContainers(ctx context.Context, cli client.APICli
 		}
 	}
 	return all.ErrorOrNil()
-}
-
-func (dd *dockerDaemon) declaredVolumes() []string {
-	var ans = make([]string, 0, len(dd.image.Config.Volumes))
-	for containerPath := range dd.image.Config.Volumes {
-		ans = append(ans, containerPath)
-	}
-	return ans
-}
-
-func (dd *dockerDaemon) declaredPorts() []int {
-	var ans []int
-
-	for port := range dd.image.Config.ExposedPorts {
-		ans = append(ans, port.Int())
-	}
-	return ans
-}
-
-func findRootPort(ports []int) int {
-	if len(ports) == 0 {
-		return -1
-	}
-	priority := portsPriority()
-
-	var (
-		bestPriority = 999
-		bestService  = 0
-	)
-
-	for i, port := range ports {
-		p, ok := priority[port]
-		if ok && p < bestPriority {
-			bestPriority = p
-			bestService = i
-		}
-	}
-	return bestService
-}
-
-func portsPriority() map[int]int {
-	// small value means higher priority
-	// nolint:gomnd
-	return map[int]int{
-		80:   1,
-		8080: 2,
-	}
 }
 
 func toEnvList(env map[string]string) []string {

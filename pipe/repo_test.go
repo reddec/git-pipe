@@ -3,102 +3,209 @@ package pipe_test
 import (
 	"context"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/reddec/git-pipe/backup/nobackup"
+	"github.com/docker/docker/client"
+	"github.com/google/uuid"
 	"github.com/reddec/git-pipe/core"
-	v1 "github.com/reddec/git-pipe/core/v1"
-	"github.com/reddec/git-pipe/cryptor/noecnryption"
+	"github.com/reddec/git-pipe/core/event"
+	"github.com/reddec/git-pipe/core/ingress"
+	"github.com/reddec/git-pipe/core/network"
 	"github.com/reddec/git-pipe/internal"
 	"github.com/reddec/git-pipe/pipe"
+	"github.com/reddec/git-pipe/remote"
 	"github.com/reddec/git-pipe/remote/git"
-	"github.com/reddec/git-pipe/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
 func TestRepo(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-
-	env, err := v1.New(ctx, v1.DefaultConfig(), &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
-	require.NoError(t, err)
-	defer env.Close()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		env.Run(ctx)
-	}()
-
-	allEvents, err := env.Launcher().Subscribe(ctx, 100, true)
-	require.NoError(t, err)
-	core.LogEvents(internal.LoggerFromContext(ctx), allEvents)
-
-	defer func() { <-done }()
 	defer cancel()
 
-	url := createRepo(ctx, "example-srv", map[string]string{
+	tc := testBaseEnv(t, "repo-test")
+	defer tc.Close()
+
+	source := tc.CreateRepo(ctx, map[string]string{
 		"Dockerfile": `
 FROM hashicorp/http-echo
 EXPOSE 80
-HEALTHCHECK --interval=1s CMD ["/http-echo", "-version"]
+VOLUME /data
+HEALTHCHECK --interval=200ms CMD ["/http-echo", "-version"]
 CMD ["-listen", ":80", "-text", "hello"]
 `,
 	})
 
-	tmpDir, err := ioutil.TempDir("", "")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	src, err := git.FromURL(url)
-	require.NoError(t, err)
-
-	events, err := env.Launcher().Subscribe(ctx, 100, false)
-	require.NoError(t, err)
-	defer env.Launcher().Unsubscribe(ctx, events)
-
-	err = env.Launcher().Launch(ctx, core.Descriptor{
-		Name:   "@repo-monitor",
-		Daemon: pipe.Default(src, tmpDir),
-	})
-	require.NoError(t, err)
-
-	timedCtx, timedCancel := context.WithTimeout(ctx, 10*time.Second)
+	timedCtx, timedCancel := context.WithTimeout(ctx, time.Minute)
 	defer timedCancel()
 
-	ready := core.WaitForLauncherEventContext(timedCtx, events, "example-srv", core.LauncherEventReady)
-	assert.True(t, ready)
+	task := internal.Spawn(timedCtx, func(ctx context.Context) error {
+		pipe.Run(ctx, source, tc.env, time.Hour)
+		return nil
+	})
+	defer task.Stop()
 
-	srv, err := env.Registry().Find("example-srv", "")
-	require.NoError(t, err)
+	select {
+	case <-timedCtx.Done():
+		t.Fail()
+	case <-tc.events.OnReady():
+	}
 
-	address, err := env.Network().Resolve(ctx, srv.Address())
-	require.NoError(t, err)
+	assert.Contains(t, tc.testDNS.registered, "80.repo-test")
+	assert.Contains(t, tc.testDNS.registered, "repo-test")
 
-	t.Log(address)
+	assert.Contains(t, tc.Ingress("80.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("repo-test").Group, "repo-test")
+
+	assert.Equal(t, tc.backup.RestoreName, "repo-test")
+	assert.Equal(t, tc.backup.RestoreVolumes, []string{"repo-test"})
+
+	assert.Equal(t, tc.backup.ScheduleName, "repo-test")
+	assert.Equal(t, tc.backup.ScheduleVolumes, []string{"repo-test"})
 }
 
-func createRepo(ctx context.Context, name string, files map[string]string) string {
-	gitDir, err := ioutil.TempDir("", "")
-	if err != nil {
+func TestRepoCompose(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	tc := testBaseEnv(t, "repo-test")
+	defer tc.Close()
+
+	source := tc.CreateRepo(ctx, map[string]string{
+		"docker-compose.yaml": `version: "3"
+services:
+ web:
+   image: hashicorp/http-echo
+   command: -listen :80 -text "web"
+   ports:
+   - 443:443
+   - 8080:80
+
+ srv:
+   image: hashicorp/http-echo
+   command: -listen :80 -text "srv"
+   domainname: service
+   ports:
+   - 8081:80
+
+ env:
+   image: ncarlier/webhookd
+   entrypoint: /bin/sh
+   command: "-c 'echo \"#!/bin/sh\" > /env.sh; echo env >> /env.sh; chmod +x /env.sh; exec webhookd --scripts /'"
+   environment:
+     TEST: "${MY_TEST}"
+   ports:
+   - 8080
+volumes:
+  alfa:
+  sigma:
+`,
+	})
+
+	timedCtx, timedCancel := context.WithTimeout(ctx, time.Minute)
+	defer timedCancel()
+
+	tc.env.Vars = map[string]string{
+		"MY_TEST": "xyz",
+	}
+
+	task := internal.Spawn(timedCtx, func(ctx context.Context) error {
+		pipe.Run(ctx, source, tc.env, time.Hour)
+		return nil
+	})
+	defer task.Stop()
+
+	select {
+	case <-timedCtx.Done():
+		t.Fail()
+	case <-tc.events.OnReady():
+	}
+
+	assert.Contains(t, tc.testDNS.registered, "web.repo-test")
+	assert.Contains(t, tc.testDNS.registered, "80.web.repo-test")
+	assert.Contains(t, tc.testDNS.registered, "443.web.repo-test")
+
+	assert.Contains(t, tc.testDNS.registered, "service.repo-test")
+	assert.Contains(t, tc.testDNS.registered, "80.service.repo-test")
+
+	assert.Contains(t, tc.testDNS.registered, "env.repo-test")
+	assert.Contains(t, tc.testDNS.registered, "8080.env.repo-test")
+
+	assert.Contains(t, tc.Ingress("web.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("80.web.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("443.web.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("web.repo-test").Addresses[0], ":80")
+
+	assert.Contains(t, tc.Ingress("service.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("80.service.repo-test").Group, "repo-test")
+
+	assert.Contains(t, tc.Ingress("env.repo-test").Group, "repo-test")
+	assert.Contains(t, tc.Ingress("8080.env.repo-test").Group, "repo-test")
+
+	assert.Equal(t, "repo-test", tc.backup.RestoreName)
+	assert.Equal(t, []string{"repo-test_alfa", "repo-test_sigma"}, tc.backup.RestoreVolumes)
+
+	assert.Equal(t, "repo-test", tc.backup.ScheduleName)
+	assert.Equal(t, []string{"repo-test_alfa", "repo-test_sigma"}, tc.backup.ScheduleVolumes)
+}
+
+type testContext struct {
+	backup         *mockBackup
+	workDir        string
+	backupDir      string
+	events         *event.Emitter
+	ingressBackend *testIngress
+	testDNS        *testDNS
+	env            *core.Environment
+}
+
+func (tc *testContext) Ingress(domain string) ingress.Record {
+	for _, r := range tc.ingressBackend.state {
+		if r.Domain == domain {
+			return r
+		}
+	}
+	return ingress.Record{}
+}
+
+func (tc *testContext) Close() {
+	_ = tc.env.Docker.Close()
+	_ = os.RemoveAll(tc.workDir)
+}
+
+func (tc *testContext) CreateRepo(ctx context.Context, files map[string]string) remote.Source {
+	name := uuid.New().String()
+
+	gitDir := filepath.Join(tc.workDir, "repos", "bare", name)
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
 		panic(err)
 	}
 
-	repoDir, err := ioutil.TempDir("", "")
-	if err != nil {
+	repoDir := filepath.Join(tc.workDir, "repos", "cloned", name)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
 		panic(err)
 	}
 
 	inBareRepo := internal.At(repoDir)
 
 	// create git repo
-	err = inBareRepo.Do(ctx, "git", "init", "--bare", name+".git").Exec()
+	err := inBareRepo.Do(ctx, "git", "init", "--bare", name+".git").Exec()
 	if err != nil {
 		panic(err)
 	}
@@ -130,251 +237,110 @@ func createRepo(ctx context.Context, name string, files map[string]string) strin
 	if err != nil {
 		panic(err)
 	}
-	return gitURL
+
+	r, err := git.FromURL(gitURL)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
-func TestRepo_Docker(t *testing.T) {
-	logger, err := zap.NewDevelopment()
+func testBaseEnv(t *testing.T, name string) *testContext {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	require.NoError(t, err)
-	zap.ReplaceGlobals(logger)
-	defer logger.Sync()
 
-	tmpDir, err := ioutil.TempDir("", "")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	gitDir, err := ioutil.TempDir("", "")
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	defer os.RemoveAll(gitDir)
-
-	repoDir, err := ioutil.TempDir("", "")
-	if !assert.NoError(t, err) {
-		return
-	}
-
-	defer os.RemoveAll(repoDir)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	repoURL := createRepo(ctx, "my-project", map[string]string{
-		"Dockerfile": `
-FROM hashicorp/http-echo
-CMD ["-text", "srv"]
-`,
-	})
-
-	// create pipe
 	workDir, err := ioutil.TempDir("", "")
-	if !assert.NoError(t, err) {
-		return
+	require.NoError(t, err)
+
+	net, err := network.NewDockerNetwork(context.Background(), cli, "git-test-pipe", true)
+	require.NoError(t, err)
+
+	tc := &testContext{
+		workDir:        workDir,
+		backupDir:      filepath.Join(workDir, "backups"),
+		ingressBackend: &testIngress{},
+		testDNS:        &testDNS{},
+		events:         event.New(10),
+		backup:         &mockBackup{},
 	}
 
-	defer os.RemoveAll(workDir)
-
-	src, err := git.FromURL(repoURL)
-	assert.NoError(t, err)
-	cfg := v1.NewConfig(v1.Network("git-test-pipe"), v1.Domain("localhost"))
-
-	env, err := v1.NewBackground(ctx, cfg, &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
-	require.NoError(t, err)
-	defer env.Stop()
-	defer cancel()
-
-	go func() {
-		for event := range env.Registry().Subscribe(1024, true) {
-			zap.L().Debug("registry event",
-				zap.String("service", event.Service.Name),
-				zap.String("namespace", event.Service.Namespace),
-				zap.String("domain", event.Service.Domain),
-				zap.String("event", event.Event.String()))
-		}
-	}()
-
-	allEvents, err := env.Launcher().Subscribe(ctx, 100, true)
-	require.NoError(t, err)
-	core.LogEvents(internal.LoggerFromContext(ctx), allEvents)
-
-	const port = "29931"
-	const bindAddr = "127.0.0.1:" + port
-
-	err = env.Launcher().Launch(ctx, core.Descriptor{
-		Name: "@router",
-		Daemon: router.New(router.Config{
-			Bind: bindAddr,
-		}),
-	})
-	require.NoError(t, err)
-
-	err = env.Launcher().Launch(ctx, core.Descriptor{
-		Name: "@poller/my-project",
-		Daemon: pipe.Poller(src, time.Second, time.Minute, false, tmpDir, map[string]string{
-			"MY_TEST": "123",
-		}),
-	})
-	require.NoError(t, err)
-
-	ready := core.WaitForEvent(ctx, env.Launcher(), "my-project", core.LauncherEventReady)
-	require.True(t, ready)
-
-	u := "http://my-project.localhost:" + port
-	t.Log(u)
-	var ok bool
-	for i := 0; i < 10; i++ {
-		res, err := http.Get(u)
-		if err != nil || res.StatusCode == http.StatusBadGateway {
-			t.Log("attempt", i, "failed:", err)
-			time.Sleep(time.Second)
-			continue
-		}
-		ok = true
-		break
+	tc.env = &core.Environment{
+		Name:      name,
+		Directory: filepath.Join(workDir, "data"),
+		Base: core.Base{
+			DNS:     tc.testDNS,
+			Ingress: ingress.New(tc.ingressBackend),
+			Backup:  tc.backup,
+			Network: net,
+			Docker:  cli,
+		},
+		Event: tc.events,
 	}
-
-	assert.True(t, ok)
-	res, err := http.Get("http://my-project.localhost:" + port)
-	assert.NoError(t, err)
-	data, err := ioutil.ReadAll(res.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, "srv\n", string(data))
+	return tc
 }
 
-//
-//func TestRepo_Compose(t *testing.T) {
-//	logger, err := zap.NewDevelopment()
-//	require.NoError(t, err)
-//	zap.ReplaceGlobals(logger)
-//	defer logger.Sync()
-//
-//	tmpDir, err := ioutil.TempDir("", "")
-//	require.NoError(t, err)
-//	defer os.RemoveAll(tmpDir)
-//
-//	gitDir, err := ioutil.TempDir("", "")
-//	if !assert.NoError(t, err) {
-//		return
-//	}
-//
-//	defer os.RemoveAll(gitDir)
-//
-//	repoDir, err := ioutil.TempDir("", "")
-//	if !assert.NoError(t, err) {
-//		return
-//	}
-//
-//	defer os.RemoveAll(repoDir)
-//	ctx := context.Background()
-//
-//	repoURL := createRepo(ctx, "my-project", map[string]string{
-//		"docker-compose.yaml": `version: "3"
-//services:
-//  web:
-//    image: hashicorp/http-echo
-//    command: -listen :80 -text "web"
-//    ports:
-//    - 8080:80
-//    - 443:443
-//  srv:
-//    image: hashicorp/http-echo
-//    command: -listen :80 -text "srv"
-//    ports:
-//    - 8081:80
-//
-//  env:
-//    image: ncarlier/webhookd
-//    entrypoint: /bin/sh
-//    command: "-c 'echo \"#!/bin/sh\" > /env.sh; echo env >> /env.sh; chmod +x /env.sh; exec webhookd --scripts /'"
-//    environment:
-//      TEST: "${MY_TEST}"
-//    ports:
-//    - 8080
-//`,
-//	})
-//
-//	// create pipe
-//	workDir, err := ioutil.TempDir("", "")
-//	if !assert.NoError(t, err) {
-//		return
-//	}
-//
-//	defer os.RemoveAll(workDir)
-//
-//	src, err := git.FromURL(repoURL)
-//	assert.NoError(t, err)
-//	cfg := v1.NewConfig(v1.Network("git-test-pipe"), v1.NoResolve())
-//	env, err := v1.NewBackground(ctx, cfg, &nobackup.NoBackup{}, &noecnryption.NoEncryption{})
-//	require.NoError(t, err)
-//	defer env.Stop()
-//
-//	allEvents, err := env.Launcher().Subscribe(ctx, 100, true)
-//	require.NoError(t, err)
-//	core.LogEvents(internal.LoggerFromContext(ctx), allEvents)
-//
-//	const port = "29931"
-//	const bindAddr = "127.0.0.1:" + port
-//
-//	err = env.Launcher().Launch(ctx, core.Descriptor{
-//		Name: "@router",
-//		Daemon: router.New(router.Config{
-//			Bind: bindAddr,
-//		}),
-//	})
-//	require.NoError(t, err)
-//
-//	err = env.Launcher().Launch(ctx, core.Descriptor{
-//		Name: "@poller/my-project",
-//		Daemon: pipe.Poller(src, time.Second, time.Minute, false, tmpDir, map[string]string{
-//			"MY_TEST": "123",
-//		}),
-//	})
-//	require.NoError(t, err)
-//
-//	ready := core.WaitForEvent(ctx, env.Launcher(), "my-project", core.LauncherEventReady)
-//	require.True(t, ready)
-//
-//	u := "http://my-project.localhost:" + port
-//	t.Log(u)
-//	var ok bool
-//	for i := 0; i < 10; i++ {
-//		res, err := http.Get(u)
-//		if err != nil || res.StatusCode == http.StatusBadGateway {
-//			t.Log("attempt", i, "failed:", err)
-//			time.Sleep(time.Second)
-//			continue
-//		}
-//		ok = true
-//		break
-//	}
-//
-//	assert.True(t, ok)
-//	res, err := http.Get("http://my-project.localhost:" + port)
-//	assert.NoError(t, err)
-//	data, err := ioutil.ReadAll(res.Body)
-//	assert.NoError(t, err)
-//	assert.Equal(t, http.StatusOK, res.StatusCode)
-//	assert.Equal(t, "web\n", string(data))
-//
-//	res, err = http.Get("http://web.my-project.localhost:" + port)
-//	assert.NoError(t, err)
-//	data, err = ioutil.ReadAll(res.Body)
-//	assert.NoError(t, err)
-//	assert.Equal(t, http.StatusOK, res.StatusCode)
-//	assert.Equal(t, "web\n", string(data))
-//
-//	res, err = http.Get("http://srv.my-project.localhost:" + port)
-//	assert.NoError(t, err)
-//	data, err = ioutil.ReadAll(res.Body)
-//	assert.NoError(t, err)
-//	assert.Equal(t, http.StatusOK, res.StatusCode)
-//	assert.Equal(t, "srv\n", string(data))
-//
-//	res, err = http.Post("http://env.my-project.localhost:"+port+"/env", "", nil)
-//	assert.NoError(t, err)
-//	data, err = ioutil.ReadAll(res.Body)
-//	assert.NoError(t, err)
-//	assert.Equal(t, http.StatusOK, res.StatusCode)
-//	assert.Contains(t, string(data), "123")
-//}
+type testIngress struct {
+	state []ingress.Record
+}
+
+func (ti *testIngress) Set(ctx context.Context, records []ingress.Record) error {
+	ti.state = records
+	return nil
+}
+
+type testDNS struct {
+	lock       sync.RWMutex
+	registered map[string]bool
+}
+
+func (td *testDNS) Register(ctx context.Context, domains []string) error {
+	td.lock.Lock()
+	defer td.lock.Unlock()
+	if td.registered == nil {
+		td.registered = map[string]bool{}
+	}
+	for _, domain := range domains {
+		td.registered[domain] = true
+	}
+
+	return nil
+}
+
+func (td *testDNS) State() map[string]bool {
+	td.lock.RLock()
+	defer td.lock.RUnlock()
+	cp := make(map[string]bool)
+	for d := range td.registered {
+		cp[d] = true
+	}
+	return cp
+}
+
+type mockBackup struct {
+	RestoreName     string
+	RestoreVolumes  []string
+	BackupName      string
+	BackupVolumes   []string
+	ScheduleName    string
+	ScheduleVolumes []string
+}
+
+func (mb *mockBackup) Restore(ctx context.Context, name string, volumeNames []string) error {
+	mb.RestoreName = name
+	mb.RestoreVolumes = volumeNames
+	return nil
+}
+
+func (mb *mockBackup) Backup(ctx context.Context, name string, volumeNames []string) error {
+	mb.BackupName = name
+	mb.BackupVolumes = volumeNames
+	return nil
+}
+
+func (mb *mockBackup) Schedule(ctx context.Context, name string, volumeNames []string) *internal.Task {
+	mb.ScheduleName = name
+	mb.ScheduleVolumes = volumeNames
+	return internal.Spawn(ctx, func(ctx context.Context) error {
+		return nil
+	})
+}

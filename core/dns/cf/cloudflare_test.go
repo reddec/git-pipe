@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/reddec/git-pipe/dns/cf"
+	"github.com/reddec/git-pipe/core/dns/cf"
 
 	"github.com/stretchr/testify/assert"
 )

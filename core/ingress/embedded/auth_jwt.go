@@ -1,4 +1,4 @@
-package router
+package embedded
 
 import (
 	"errors"
@@ -26,7 +26,7 @@ type JWTClaims struct {
 // subject is defining restriction for allowed group, methods for allowed HTTP methods.
 // Sets HeaderUser to the request object in case of success.
 func JWT(sharedKey string) RouteHandler {
-	return RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *Route) error {
+	return RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route Route) error {
 		logger := internal.LoggerFromContext(request.Context()).Named("jwt")
 		token := getToken(request)
 		if token == "" {
@@ -59,9 +59,9 @@ func JWT(sharedKey string) RouteHandler {
 			return ErrAbort
 		}
 		logger = logger.With(zap.String("audience", meta.Audience), zap.String("subject", meta.Subject), zap.Strings("methods", meta.Methods))
-		if meta.Subject != "" && !strings.EqualFold(route.Service.Namespace, meta.Subject) {
+		if meta.Subject != "" && !strings.EqualFold(route.Record.Group, meta.Subject) {
 			http.Error(writer, "", http.StatusForbidden)
-			logger.Info("namespace not allowed for the subject")
+			logger.Info("group not allowed for the subject")
 			return ErrAbort
 		}
 		if len(meta.Methods) > 0 && !containsFold(meta.Methods, request.Method) {

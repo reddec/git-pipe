@@ -1,30 +1,38 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/docker/docker/client"
+	"github.com/hashicorp/go-multierror"
 	"github.com/reddec/git-pipe/backup"
 	"github.com/reddec/git-pipe/backup/filebackup"
 	"github.com/reddec/git-pipe/backup/nobackup"
 	"github.com/reddec/git-pipe/backup/objectstore"
 	"github.com/reddec/git-pipe/core"
-	v1 "github.com/reddec/git-pipe/core/v1"
+	"github.com/reddec/git-pipe/core/dns/cf"
+	"github.com/reddec/git-pipe/core/dns/noregister"
+	"github.com/reddec/git-pipe/core/dns/singlehost"
+	"github.com/reddec/git-pipe/core/event"
+	"github.com/reddec/git-pipe/core/ingress"
+	"github.com/reddec/git-pipe/core/ingress/dummy"
+	"github.com/reddec/git-pipe/core/ingress/embedded"
+	"github.com/reddec/git-pipe/core/network"
+	"github.com/reddec/git-pipe/core/storage"
 	"github.com/reddec/git-pipe/cryptor/symmetric"
-	"github.com/reddec/git-pipe/dns"
-	"github.com/reddec/git-pipe/dns/cf"
+	"github.com/reddec/git-pipe/internal"
 	"github.com/reddec/git-pipe/pipe"
+	"github.com/reddec/git-pipe/remote"
 	"github.com/reddec/git-pipe/remote/git"
-	"github.com/reddec/git-pipe/router"
-	"golang.org/x/crypto/acme/autocert"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type CommandRun struct {
@@ -38,9 +46,10 @@ type CommandRun struct {
 	FQDN             bool          `long:"fqdn" short:"F" env:"FQDN" description:"Construct from URL unique FQDN based on path and domain"`
 	GracefulShutdown time.Duration `long:"graceful-shutdown" env:"GRACEFUL_SHUTDOWN" description:"Interval before server shutdown" default:"15s"`
 	EnvFile          []string      `long:"env-file" short:"e" env:"ENV_FILE" description:"Environment variables files"`
-
-	Provider   string    `long:"provider" short:"p" env:"PROVIDER" description:"DNS provider for auto registration" choice:"cloudflare"`
-	Cloudflare cf.Config `group:"Cloudflare config" namespace:"cloudflare" env-namespace:"CLOUDFLARE"`
+	LogMode          string        `long:"log-mode" env:"LOG_MODE" description:"Logger mode" default:"development" choice:"production" choice:"development"`
+	LogLevel         logLevel      `long:"log-level" env:"LOG_LEVEL" description:"Log level" default:"debug"`
+	Provider         string        `long:"provider" short:"p" env:"PROVIDER" description:"DNS provider for auto registration" choice:"cloudflare"`
+	Cloudflare       cf.Config     `group:"Cloudflare config" namespace:"cloudflare" env-namespace:"CLOUDFLARE"`
 
 	Args struct {
 		Repos []string `positional-arg-name:"git-url" required:"1" description:"remote git URL to poll with optional branch/tag name after hash"`
@@ -50,7 +59,7 @@ type CommandRun struct {
 type Router struct {
 	Domain      string `long:"domain" short:"d" env:"DOMAIN" default:"localhost" description:"Root domain, default is hostname"`
 	Dummy       bool   `long:"dummy" short:"D" env:"DUMMY" description:"Dummy mode disables HTTP router"`
-	Bind        string `long:"bind" short:"b" env:"BIND" description:"Address to where bind HTTP server" default:"127.0.0.1:8080"`
+	Bind        string `long:"bind" short:"b" env:"BIND" description:"Addresses to where bind HTTP server" default:"127.0.0.1:8080"`
 	AutoTLS     bool   `long:"auto-tls" short:"T" env:"AUTO_TLS" description:"Automatic TLS (Let's Encrypt), ignores bind address and uses 0.0.0.0:443 port"`
 	TLS         bool   `long:"tls" env:"TLS" description:"Enable HTTPS serving with TLS. TLS files should support multiple domains, otherwise path-routing should be enabled. Ignored with --auto-tls'" json:"tls"`
 	SSLDir      string `long:"ssl-dir" env:"SSL_DIR" description:"Directory for SSL certificates and keys. Should contain server.{crt,key} files unless auto-tls enabled. For auto-tls it is used as cache dir" default:"ssl"`
@@ -75,62 +84,86 @@ func (cmd *CommandRun) Execute([]string) error {
 		cmd.Router.Domain = name
 	}
 
+	logger, err := cmd.logger()
+	if err != nil {
+		return fmt.Errorf("create logger: %w", err)
+	}
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
 	ctx, cancel := context.WithCancel(global)
 	defer cancel()
 
-	storage, err := cmd.createBackupProvider()
+	backupProvider, err := cmd.createBackupProvider()
 	if err != nil {
 		return fmt.Errorf("initialize storage: %w", err)
 	}
 
 	encryption := &symmetric.Symmetric{Key: cmd.BackupKey}
 
-	cfg := v1.DefaultConfig()
-	cfg.Domain = cmd.Router.Domain
-	cfg.NetworkName = cmd.Network
-	cfg.GracefulTimeout = cmd.GracefulShutdown
-	cfg.RetryDeployInterval = cmd.GracefulShutdown
-
-	env, err := v1.NewBackground(ctx, cfg, storage, encryption)
+	dnsProvider, err := cmd.createDNSProvider(ctx)
 	if err != nil {
-		return fmt.Errorf("create env: %w", err)
+		return fmt.Errorf("create DNS: %w", err)
 	}
 
-	defer env.Stop()
+	if cmd.Router.PathRouting {
+		dnsProvider = singlehost.New(cmd.Router.Domain, dnsProvider)
+	}
 
-	if cmd.Provider != "" {
-		if d, err := cmd.createDNSProvider(ctx); err != nil {
-			return fmt.Errorf("create DNS: %w", err)
-		} else if err := env.Launcher().Launch(ctx, core.Descriptor{
-			Name:   "@dns-provider",
-			Daemon: dns.Daemonize(d),
-		}); err != nil {
-			return fmt.Errorf("launch DNS provider: %w", err)
+	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer docker.Close()
+
+	dockerNetwork, err := network.NewDockerNetwork(ctx, docker, cmd.Network, false)
+	if err != nil {
+		return fmt.Errorf("create docker network: %w", err)
+	}
+
+	var (
+		ingressImpl core.Ingress
+		router      *embedded.Router
+	)
+	if cmd.Router.Dummy {
+		ingressImpl = dummy.New()
+	} else {
+		var resolver embedded.RequestResolver
+		if cmd.Router.PathRouting {
+			resolver = embedded.ByPath()
+		} else {
+			resolver = embedded.ByDomain(cmd.Router.Domain)
 		}
+
+		var chain []embedded.RouteHandler
+		if cmd.Router.JWT != "" {
+			chain = append(chain, embedded.JWT(cmd.Router.JWT))
+		}
+		chain = append(chain, embedded.Proxy(dockerNetwork))
+		router = embedded.New(resolver, chain...)
+		ingressImpl = ingress.New(router)
+	}
+
+	env := core.Base{
+		DNS:     dnsProvider,
+		Ingress: ingressImpl,
+		Backup:  storage.New(backupProvider, docker, encryption, "", "local", cmd.BackupInterval),
+		Network: dockerNetwork,
+		Docker:  docker,
+	}
+
+	var wg multierror.Group
+
+	if router != nil {
+		wg.Go(func() error {
+			defer cancel()
+			return cmd.runRouter(ctx, router)
+		})
 	}
 
 	environ, err := cmd.environment()
 	if err != nil {
 		return fmt.Errorf("read environment: %w", err)
-	}
-
-	if !cmd.Router.Dummy {
-		var handlers []router.RouteHandler
-		if cmd.Router.JWT != "" {
-			handlers = append(handlers, router.JWT(cmd.Router.JWT))
-		}
-
-		_ = env.Launcher().Launch(ctx, core.Descriptor{
-			Name: "@router",
-			Daemon: router.New(router.Config{
-				Bind:        cmd.Router.Bind,
-				AutoTLS:     cmd.Router.AutoTLS,
-				TLS:         cmd.Router.TLS,
-				SSLDir:      cmd.Router.SSLDir,
-				NoIndex:     cmd.Router.NoIndex,
-				PathRouting: cmd.Router.PathRouting,
-			}),
-		})
 	}
 
 	for _, repo := range cmd.Args.Repos {
@@ -139,19 +172,28 @@ func (cmd *CommandRun) Execute([]string) error {
 			return fmt.Errorf("load repo %s: %w", repo, err)
 		}
 
-		name := pipe.Name(source.Ref(), cmd.FQDN)
-		d := pipe.Poller(source, cmd.Interval, cmd.BackupInterval, cmd.FQDN, cmd.Output, filterEnvironment(environ, name))
-		err = env.Launcher().Launch(ctx, core.Descriptor{
-			Name:   name,
-			Daemon: d,
-		})
-		if err != nil {
-			return fmt.Errorf("launch %s: %w", name, err)
+		name := cmd.repoName(source)
+
+		dir := filepath.Join(cmd.Output, name)
+		repoEnv := &core.Environment{
+			Base:      env,
+			Name:      name,
+			Directory: dir,
+			Vars:      filterEnvironment(environ, name),
+			Event:     event.Noop(),
 		}
+
+		ref := source.Ref()
+		logger.Info("repository detected", zap.String("repo", ref.Redacted()), zap.String("name", name), zap.String("workdir", dir))
+
+		wg.Go(func() error {
+			defer cancel()
+			pipe.Run(ctx, source, repoEnv, cmd.Interval)
+			return nil
+		})
 	}
 
-	env.Wait()
-	return nil
+	return wg.Wait().ErrorOrNil()
 }
 
 var (
@@ -178,7 +220,7 @@ func (cmd CommandRun) createBackupProvider() (backup.Backup, error) {
 	}
 }
 
-func (cmd CommandRun) createDNSProvider(ctx context.Context) (dns.DNS, error) {
+func (cmd CommandRun) createDNSProvider(ctx context.Context) (core.DNS, error) {
 	switch cmd.Provider {
 	case "cloudflare":
 		p, err := cf.New(ctx, cmd.Cloudflare)
@@ -186,34 +228,41 @@ func (cmd CommandRun) createDNSProvider(ctx context.Context) (dns.DNS, error) {
 			return nil, fmt.Errorf("create cloudflare DNS provider: %w", err)
 		}
 		return p, nil
+	case "":
+		return &noregister.NoRegister{}, nil
 	default:
 		return nil, errUnknownProvider
 	}
 }
 
-var errUnknownDomain = errors.New("unknown domain")
-
-func (cmd CommandRun) createAutoTLSListener(domainsProvider interface {
-	HasDomain(domain string) bool
-}) net.Listener {
-	manager := &autocert.Manager{
-		Prompt: autocert.AcceptTOS,
-		Cache:  autocert.DirCache(cmd.Router.SSLDir),
-		HostPolicy: func(ctx context.Context, host string) error {
-			if (cmd.Router.Domain == host && cmd.Router.PathRouting) || domainsProvider.HasDomain(host) {
-				return nil
-			}
-			return errUnknownDomain
-		},
+func (cmd CommandRun) runRouter(ctx context.Context, router *embedded.Router) error {
+	var allowedDomains = embedded.Static(cmd.Router.Domain)
+	if !cmd.Router.PathRouting {
+		allowedDomains = router
 	}
 
-	return manager.Listener()
+	switch {
+	case cmd.Router.AutoTLS:
+		return embedded.RunAutoTLS(ctx, cmd.Router.SSLDir, allowedDomains, router)
+	case cmd.Router.TLS:
+		return embedded.RunTLS(ctx, cmd.Router.Bind, cmd.Router.SSLDir, router)
+	default:
+		return embedded.Run(ctx, cmd.Router.Bind, router)
+	}
+}
+
+func (cmd CommandRun) repoName(source remote.Source) string {
+	ref := source.Ref()
+	if cmd.FQDN {
+		return generateFullName(ref)
+	}
+	return generateSimpleName(ref)
 }
 
 func (cmd CommandRun) environment() (map[string]string, error) {
 	var env = make(map[string]string)
 	for _, file := range cmd.EnvFile {
-		v, err := readEnvFile(file)
+		v, err := internal.ReadEnvFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("read env file: %w", err)
 		}
@@ -234,6 +283,16 @@ func (cmd CommandRun) environment() (map[string]string, error) {
 	return env, nil
 }
 
+func (cmd CommandRun) logger() (*zap.Logger, error) {
+	opt := zap.IncreaseLevel(zap.NewAtomicLevelAt(zapcore.Level(cmd.LogLevel)))
+	switch cmd.LogMode {
+	case "production":
+		return zap.NewProduction(opt)
+	default:
+		return zap.NewDevelopment(opt)
+	}
+}
+
 func filterEnvironment(environ map[string]string, repoName string) map[string]string {
 	appPrefix := strings.ReplaceAll(strings.ToUpper(repoName), "-", "_") + "_"
 
@@ -248,24 +307,40 @@ func filterEnvironment(environ map[string]string, repoName string) map[string]st
 	return res
 }
 
-func readEnvFile(filename string) (map[string]string, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
+func generateSimpleName(u url.URL) string {
+	names := strings.Split(u.Path, "/")
+	name := names[len(names)-1]
+	name = strings.TrimSuffix(name, ".git")
+	name = internal.ToDomain(name)
+	if name == "" {
+		return generateFullName(u)
 	}
-	defer f.Close()
+	return name
+}
 
-	ans := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if len(line) == 0 || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
+func generateFullName(u url.URL) string {
+	baseName := u.Path
 
-		kv := strings.SplitN(line, "=", 2) //nolint:gomnd
-		ans[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+	name := strings.ReplaceAll(baseName, "/", ".")
+	name = strings.Trim(name, ".git")
+	name = internal.ToDomain(name)
+	name = strings.Trim(name, ".")
+
+	parts := strings.Split(name, ".")
+	for i := 0; i < len(parts)/2; i++ {
+		parts[i], parts[len(parts)-i-1] = parts[len(parts)-i-1], parts[i]
 	}
 
-	return ans, scanner.Err()
+	domain := strings.Join(parts, ".")
+
+	if hostname := u.Hostname(); hostname != "" {
+		domain += "." + hostname
+	}
+	return domain
+}
+
+type logLevel zapcore.Level
+
+func (ll *logLevel) UnmarshalFlag(value string) error {
+	return (*zapcore.Level)(ll).UnmarshalText([]byte(value))
 }
