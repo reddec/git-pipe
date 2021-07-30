@@ -53,6 +53,12 @@ Wait a bit to finish building and go to
 * http://wordpress.wordpress-docker-compose.localhost:8080 - wordpress app
 * http://phpmyadmin.wordpress-docker-compose.localhost:8080 - for phpmyadmin app
 
+## Automatic UI/dashboard
+
+Index page automatically generated for unknown domain. Ex: http://localhost:8080
+
+![image](https://user-images.githubusercontent.com/6597086/127631968-85a8eaa9-1605-4ca0-ba52-7943da536d1a.png)
+
 
 
 ## Supported OS
@@ -70,5 +76,5 @@ Wait a bit to finish building and go to
   *  [ ] OIDC
 * [ ] support dynamic reconfiguration (over API/by file watch + signal)
 * [ ] support GitHub-like webhooks
-* [ ] lazy initialization
+* [ ] lazy initialization (ie: bring up service on request only)
 * [x] path routing as alternative to domain-based

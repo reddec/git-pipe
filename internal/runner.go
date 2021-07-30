@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 type At string
@@ -18,7 +20,7 @@ func In(directory string) At {
 type Process struct {
 	cmd    *exec.Cmd
 	name   string
-	logger Logger
+	logger *zap.Logger
 }
 
 func (inv At) Do(ctx context.Context, binary string, args ...string) *Process {
@@ -39,6 +41,11 @@ func (prc *Process) Env(environ map[string]string) *Process {
 
 func (prc *Process) Text(data string) *Process {
 	prc.cmd.Stdin = bytes.NewBufferString(data)
+	return prc
+}
+
+func (prc *Process) Input(data []byte) *Process {
+	prc.cmd.Stdin = bytes.NewReader(data)
 	return prc
 }
 

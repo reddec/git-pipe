@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
-	"github.com/reddec/git-pipe/router"
+	"github.com/reddec/git-pipe/core/ingress/embedded"
 )
 
 type CommandJWT struct {
@@ -21,7 +21,7 @@ type CommandJWT struct {
 func (cmd *CommandJWT) Execute([]string) error {
 	now := time.Now()
 	for _, name := range cmd.Args.Name {
-		var claims router.JWTClaims
+		var claims embedded.JWTClaims
 		claims.Audience = name
 		claims.Subject = cmd.Group
 		claims.Methods = cmd.Methods

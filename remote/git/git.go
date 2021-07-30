@@ -11,6 +11,7 @@ import (
 
 	"github.com/reddec/git-pipe/internal"
 	"github.com/reddec/git-pipe/remote"
+	"go.uber.org/zap"
 )
 
 const (
@@ -56,7 +57,7 @@ func (gc *Git) Ref() url.URL {
 func (gc *Git) Poll(ctx context.Context, targetDir string) (changed bool, err error) {
 	invoker := internal.In(targetDir)
 	var fresh = !cloned(targetDir)
-
+	internal.LoggerFromContext(ctx).Debug("cloning git repository", zap.String("target_dir", targetDir), zap.Bool("fresh", fresh))
 	if fresh {
 		if err = gc.clone(ctx, invoker); err != nil {
 			return

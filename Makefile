@@ -32,7 +32,6 @@ assemble-docs: build/git-pipe
 	echo '\n\n## Usage\n\n' >> README.md
 	stty rows 1024 cols 1024
 	./build/git-pipe --help | grep '  ' | sed -n -r '/^\s+[a-z]/p' | tail -n +2 | sed -E 's/^\s+([a-z]+)\s+(.*)?/* `\1` - \2/' >> README.md
-	./build/git-pipe --help | grep '  ' | sed -n -r '/^\s+[a-z]/p' | tail -n +2 | sed 's/^/* /'
 	./build/git-pipe --help | grep '  ' | sed -n -r '/^\s+[a-z]/p' | tail -n +2 | awk '{print $$1}' | xargs -n 1 -i sh -c 'echo "\n## {}\n\`\`\`" >> README.md && ./build/git-pipe "{}" --help >> README.md && echo "\`\`\`\n" >> README.md'
 
 README.md: assemble-docs

@@ -1,0 +1,139 @@
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+<div class="items">
+    <div class="group">
+        {{range $group, $records := .ByGroup}}
+        <div class="card">
+            <h2>
+                {{with (index $.ByDomain ($group | fqdn)).Domain}}
+                <a href="{{. | fqdn | url}}" class="domain-href" data-attr="href">{{$group}}</a>
+                {{else}}
+                {{$group}}
+                {{end}}
+            </h2>
+
+            <div class="card-body">
+                {{range $record := $records}}
+                <div class="href">
+                    <img src="{{$record.Domain | fqdn | url}}/favicon.ico" class="domain-href" data-attr="src"
+                         onerror="this.style.visibility='hidden'"/>
+                    <a href="{{$record.Domain  | fqdn | url}}" class="domain-href" data-attr="href">{{$record.Domain}}</a>
+                </div>
+                {{end}}
+            </div>
+        </div>
+        {{else}}
+        <div class="card">
+            <h2>Nothing yet deployed...</h2>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<style>
+    body {
+        padding: 1em;
+    }
+
+
+    .card {
+        color: black;
+        padding: 1em 1em 1em 1em;
+        display: flex;
+        align-items: start;
+        flex-wrap: wrap;
+        flex-direction: column;
+        border-radius: 1em;
+
+        box-shadow: 0 2px 1px -1px rgba(0, 0, 0, 0.2), 0 1px 1px 0 rgba(0, 0, 0, 0.14), 0 1px 3px 0 rgba(0, 0, 0, 0.12);
+    }
+
+    .card:not(:first-child) {
+        margin-top: -2em;
+    }
+
+    .card:not(:last-child) {
+        padding-bottom: 3em;
+    }
+
+
+    .card:nth-child(even) {
+        background-color: #483D8B;
+    }
+
+    .card:nth-child(odd) {
+        background-color: #1E90FF;
+    }
+
+    a {
+        color: #ffffff;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-decoration: none;
+    }
+
+
+    .href a {
+        padding: 0.3em;
+        color: #ffffff;
+    }
+
+
+    h2 > a:hover {
+        text-decoration: underline;
+    }
+
+    .card-body {
+        flex-grow: 1;
+        padding: 0.3em;
+        display: flex;
+        flex-wrap: wrap;
+    }
+
+    h2 {
+        margin-top: 0.1em;
+        margin-bottom: 0.1em;
+        color: #ffffff;
+    }
+
+    .href {
+        margin: 0.2em;
+        padding: 0.2em;
+        display: flex;
+        border: 0.3px solid transparent;
+    }
+
+    .href:hover {
+        border: 0.3px solid #ffffff;
+        border-radius: 0.5em;
+    }
+
+    .href img {
+        width: auto;
+        height: 2em;
+    }
+</style>
+<script>
+    let port = location.port;
+    if (port) {
+        document.querySelectorAll(".domain-href").forEach(function (element) {
+            let attr = element.getAttribute("data-attr");
+            let url = element.getAttribute(attr)
+            let target = url;
+            if (url.startsWith("//")) {
+                let sep = url.indexOf("/", 2);
+                if (sep === -1) {
+                    sep = url.length;
+                }
+                target = target.substr(0, sep) + ":" + port + target.substr(sep)
+            }
+            element.setAttribute(attr, target)
+        })
+    }
+</script>
+</body>
+
+</html>

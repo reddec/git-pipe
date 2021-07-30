@@ -1,84 +1,87 @@
-package router_test
+package embedded_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 
 	"github.com/dgrijalva/jwt-go"
-	"github.com/reddec/git-pipe/packs"
-	"github.com/reddec/git-pipe/router"
+	"github.com/reddec/git-pipe/core/ingress"
+	"github.com/reddec/git-pipe/core/ingress/embedded"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestRouter_ServeHTTP(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
 	t.Run("basic domain routing", func(t *testing.T) {
-		rt := router.New(router.Config{})
-
-		rt.Update("test", []packs.Service{
-			{
-				Group:  "my-repo",
-				Name:   "app",
-				Domain: "app.example.com",
-			},
-		})
-
+		ctx := context.Background()
 		var routed bool
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		rt := embedded.New(embedded.ByRoot(), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
 			routed = true
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
 
+		err := rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
+
 		rr := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
+		rq.Header.Set("Host", "app.example.com")
 		rt.ServeHTTP(rr, rq)
 		assert.True(t, routed)
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 	t.Run("unknown domain returns 404", func(t *testing.T) {
-		rt := router.New(router.Config{Index: true})
-
-		rt.Update("test", []packs.Service{
-			{
-				Group:  "my-repo",
-				Name:   "app",
-				Domain: "app.example.com",
-			},
-		})
-
+		ctx := context.Background()
 		var routed bool
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		rt := embedded.New(embedded.ByRoot(), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
 			routed = true
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
+		err := rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "https://app1.example.com/x/y/z", nil)
 		rt.ServeHTTP(rr, rq)
 		assert.False(t, routed)
 		assert.Equal(t, http.StatusNotFound, rr.Code)
-		assert.Contains(t, rr.Header().Get("Content-Type"), "text/html")
 	})
 	t.Run("basic path routing", func(t *testing.T) {
-		rt := router.New(router.Config{
-			PathRouting: true,
-		})
-
-		rt.Update("test", []packs.Service{
-			{
-				Group:  "my-repo",
-				Name:   "app",
-				Domain: "app.example.com",
-			},
-		})
-
+		ctx := context.Background()
 		var routed bool
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		rt := embedded.New(embedded.ByPath(), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
 			routed = true
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
+		err := rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "https://nomatter.example.com/app.example.com/some/path", nil)
@@ -87,34 +90,58 @@ func TestRouter_ServeHTTP(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 	t.Run("path routing should trim source prefix", func(t *testing.T) {
-		rt := router.New(router.Config{
-			PathRouting: true,
-		})
-
-		rt.Update("test", []packs.Service{
-			{
-				Group:  "my-repo",
-				Name:   "app",
-				Domain: "app.example.com",
-			},
-		})
-
+		ctx := context.Background()
 		var routed bool
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		rt := embedded.New(embedded.ByPath(), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
 			routed = true
 			assert.Equal(t, "/some/path", request.URL.Path)
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
-
+		err := rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
 		rr := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "https://nomatter.example.com/app.example.com/some/path", nil)
 		rt.ServeHTTP(rr, rq)
 		assert.True(t, routed)
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
+	t.Run("basic sub-domain routing", func(t *testing.T) {
+		ctx := context.Background()
+		var routed bool
+		rt := embedded.New(embedded.ByDomain("example.com"), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
+			routed = true
+			writer.WriteHeader(http.StatusOK)
+			return nil
+		}))
+
+		err := rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "myapp.service",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		rq := httptest.NewRequest(http.MethodGet, "https://myapp.service.example.com/x/y/z", nil)
+		rt.ServeHTTP(rr, rq)
+		assert.True(t, routed)
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
 }
 
-func TestRandom(t *testing.T) {
+func TestRequest(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
 	var routed atomic.Value
 	routed.Store(false)
 
@@ -124,20 +151,18 @@ func TestRandom(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rt := router.New(router.Config{})
-	rt.Update("test", []packs.Service{
+	rt := embedded.New(embedded.ByRoot(), embedded.Proxy(nil))
+
+	ctx := context.Background()
+
+	err = rt.Set(ctx, []ingress.Record{
 		{
-			Group:  "my-repo",
-			Name:   "app",
-			Domain: "app.example.com",
-			Addresses: []string{
-				srv.Listener.Addr().String(),
-			},
+			Domain:    "app.example.com",
+			Group:     "app",
+			Addresses: []string{srv.Listener.Addr().String()},
 		},
 	})
-
-	rt.Handle(&router.Random{})
-
+	require.NoError(t, err)
 	rr := httptest.NewRecorder()
 	rq := httptest.NewRequest(http.MethodGet, "https://app.example.com/x/y/z", nil)
 	rt.ServeHTTP(rr, rq)
@@ -146,25 +171,29 @@ func TestRandom(t *testing.T) {
 }
 
 func TestJWT(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	zap.ReplaceGlobals(logger)
+	defer logger.Sync()
+
 	t.Run("valid token should work", func(t *testing.T) {
 		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"aud": "client1"}).SignedString([]byte("qwerty"))
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
 
-		rt := router.New(router.Config{})
-
-		rt.Update("test", []packs.Service{
-			{
-				Group:  "my-repo",
-				Name:   "app",
-				Domain: "app.example.com",
-			},
-		})
-		rt.Handle(router.JWT("qwerty"))
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
-			assert.Equal(t, "client1", request.Header.Get(router.HeaderUser))
+		ctx := context.Background()
+		rt := embedded.New(embedded.ByRoot(), embedded.JWT("qwerty"), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
+			assert.Equal(t, "client1", request.Header.Get(embedded.HeaderUser))
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
+		err = rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
 
 		t.Run("token in header", func(t *testing.T) {
 			rr := httptest.NewRecorder()
@@ -196,16 +225,22 @@ func TestJWT(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
 
-		rt := router.New(router.Config{})
-
-		rt.Update("test", []packs.Service{
-			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
-			{Group: "my-repo-2", Name: "app2", Domain: "app2.example.com"},
-		})
-		rt.Handle(router.JWT("qwerty"))
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		ctx := context.Background()
+		rt := embedded.New(embedded.ByRoot(), embedded.JWT("qwerty"), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
+		err = rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "my-repo",
+			},
+			{
+				Domain: "app2.example.com",
+				Group:  "my-repo-2",
+			},
+		})
+		require.NoError(t, err)
 
 		t.Run("ok with allowed", func(t *testing.T) {
 			rr := httptest.NewRecorder()
@@ -235,15 +270,19 @@ func TestJWT(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
 
-		rt := router.New(router.Config{})
-
-		rt.Update("test", []packs.Service{
-			{Group: "my-repo", Name: "app", Domain: "app.example.com"},
-		})
-		rt.Handle(router.JWT("qwerty"))
-		rt.Handle(router.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, route *router.Route) error {
+		ctx := context.Background()
+		rt := embedded.New(embedded.ByRoot(), embedded.JWT("qwerty"), embedded.RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record embedded.Route) error {
+			assert.Equal(t, "client1", request.Header.Get(embedded.HeaderUser))
+			writer.WriteHeader(http.StatusOK)
 			return nil
 		}))
+		err = rt.Set(ctx, []ingress.Record{
+			{
+				Domain: "app.example.com",
+				Group:  "app",
+			},
+		})
+		require.NoError(t, err)
 
 		t.Run("ok with POST", func(t *testing.T) {
 			rr := httptest.NewRecorder()

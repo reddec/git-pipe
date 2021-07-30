@@ -4,30 +4,11 @@ import (
 	"bufio"
 	"context"
 	"io"
-	"log"
-	"os"
+
+	"go.uber.org/zap"
 )
 
-type Logger interface {
-	Println(...interface{})
-}
-
-type LoggerFunc func(...interface{})
-
-func (lf LoggerFunc) Println(vars ...interface{}) {
-	lf(vars...)
-}
-
-func Namespaced(parent Logger, name string) Logger {
-	return LoggerFunc(func(values ...interface{}) {
-		var cp = make([]interface{}, len(values)+1)
-		cp[0] = "[" + name + "]"
-		copy(cp[1:], values)
-		parent.Println(cp...)
-	})
-}
-
-func StreamingLogger(logger Logger) io.WriteCloser {
+func StreamingLogger(logger *zap.Logger) io.WriteCloser {
 	r, w := io.Pipe()
 
 	go func() {
@@ -36,7 +17,7 @@ func StreamingLogger(logger Logger) io.WriteCloser {
 
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			logger.Println(scanner.Text())
+			logger.Debug(scanner.Text())
 		}
 	}()
 
@@ -49,17 +30,21 @@ const (
 	ctxLogger loggerKeyType = "logger"
 )
 
-func WithLogger(ctx context.Context, logger Logger) context.Context {
+func WithLogger(ctx context.Context, logger *zap.Logger) context.Context {
 	return context.WithValue(ctx, ctxLogger, logger)
 }
 
-func LoggerFromContext(ctx context.Context) Logger {
-	if v, ok := ctx.Value(ctxLogger).(Logger); ok {
+func LoggerFromContext(ctx context.Context) *zap.Logger {
+	if v, ok := ctx.Value(ctxLogger).(*zap.Logger); ok {
 		return v
 	}
-	return log.New(os.Stderr, "", log.LstdFlags)
+	return zap.L()
 }
 
-func SubLogger(ctx context.Context, name string) Logger {
-	return Namespaced(LoggerFromContext(ctx), name)
+func SubLogger(ctx context.Context, name string) *zap.Logger {
+	return LoggerFromContext(ctx).Named(name)
+}
+
+func WithSubLogger(ctx context.Context, name string) context.Context {
+	return WithLogger(ctx, SubLogger(ctx, name))
 }

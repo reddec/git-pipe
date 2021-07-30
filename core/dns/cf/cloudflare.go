@@ -14,12 +14,18 @@ type Config struct {
 	IP       string `long:"ip" env:"IP" description:"Public IP address for DNS record. If not defined - will be detected automatically by myexternalip.com"`
 	Proxy    bool   `long:"proxy" env:"PROXY" description:"Let Cloudflare proxy traffic. Implies some level of protection and automatic SSL between client and Cloudflare"`
 	APIToken string `long:"api-token" env:"API_TOKEN" description:"API token"`
+	Domain   string // root domain name
 }
 
 func New(ctx context.Context, config Config) (*CloudFlare, error) {
 	client, err := cloudflare.NewWithAPIToken(config.APIToken)
 	if err != nil {
 		return nil, fmt.Errorf("create cloudflare token: %w", err)
+	}
+
+	zoneID, err := client.ZoneIDByName(config.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("get zone ID by name %s: %w", config.Domain, err)
 	}
 
 	if config.IP == "" {
@@ -30,43 +36,28 @@ func New(ctx context.Context, config Config) (*CloudFlare, error) {
 		config.IP = ip
 	}
 
-	return &CloudFlare{api: client, config: config}, nil
+	return &CloudFlare{api: client, config: config, zoneID: zoneID}, nil
 }
 
 type CloudFlare struct {
 	api    *cloudflare.API
+	zoneID string
 	config Config
 }
 
 func (cf *CloudFlare) Register(ctx context.Context, domains []string) error {
-	var zoneIDS = map[string]string{}
-	for _, domain := range domains {
-		_, zone := splitNameZone(domain)
-		_, ok := zoneIDS[zone]
-		if ok {
-			continue
-		}
-		zoneID, err := cf.api.ZoneIDByName(zone)
-		if err != nil {
-			return fmt.Errorf("get zone ID by name %s: %w", zone, err)
-		}
-		zoneIDS[zone] = zoneID
-	}
-
 	var records = map[string]string{}
-	for _, zoneID := range zoneIDS {
-		list, err := cf.api.DNSRecords(ctx, zoneID, cloudflare.DNSRecord{Type: "A"})
-		if err != nil {
-			return fmt.Errorf("list zone records: %w", err)
-		}
-
-		for _, item := range list {
-			records[item.Name] = item.ID
-		}
+	list, err := cf.api.DNSRecords(ctx, cf.zoneID, cloudflare.DNSRecord{Type: "A"})
+	if err != nil {
+		return fmt.Errorf("list zone records: %w", err)
 	}
-	for _, domain := range domains {
-		name, zone := splitNameZone(domain)
-		zoneID := zoneIDS[zone]
+
+	for _, item := range list {
+		records[item.Name] = item.ID
+	}
+
+	for _, name := range domains {
+		zoneID := cf.zoneID
 		record := cloudflare.DNSRecord{
 			Type:    "A",
 			Name:    name,
@@ -75,41 +66,25 @@ func (cf *CloudFlare) Register(ctx context.Context, domains []string) error {
 			Proxied: &cf.config.Proxy,
 		}
 
-		recordID := records[domain]
+		recordID := records[name+"."+cf.config.Domain]
 
 		if recordID != "" {
 			if err := cf.api.UpdateDNSRecord(ctx, zoneID, recordID, record); err != nil {
-				return fmt.Errorf("update record %s: %w", domain, err)
+				return fmt.Errorf("update record %s: %w", name, err)
 			}
 		} else {
 			res, err := cf.api.CreateDNSRecord(ctx, zoneID, record)
 			if err != nil {
-				return fmt.Errorf("request to create A record %s (zone: %s, name: %s): %w", domain, zone, name, err)
+				return fmt.Errorf("request to create A record %s: %w", name, err)
 			}
 
 			if !res.Success {
-				return fmt.Errorf("create A record %s: %w", domain, aggregateErrors(res.Errors))
+				return fmt.Errorf("create A record %s: %w", name, aggregateErrors(res.Errors))
 			}
 		}
 	}
 
 	return nil
-}
-
-func splitNameZone(domain string) (string, string) {
-	const zoneSize = 2
-
-	var num = 0
-	for i := len(domain) - 1; i >= 0; i-- {
-		if domain[i] == '.' {
-			num++
-		}
-		if num == zoneSize {
-			return domain[:i], domain[i+1:]
-		}
-	}
-
-	return "", domain
 }
 
 func aggregateErrors(res []cloudflare.ResponseInfo) error {
