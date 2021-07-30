@@ -2,8 +2,10 @@ package embedded
 
 import (
 	"context"
+	_ "embed" // for not-found page resource
 	"encoding/hex"
 	"errors"
+	"html/template"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -24,9 +26,15 @@ func New(requestResolver RequestResolver, chain ...RouteHandler) *Router {
 }
 
 type Router struct {
-	chain    []RouteHandler
-	routes   atomic.Value // map[string]ingress.Record
-	resolver RequestResolver
+	chain        []RouteHandler
+	routes       atomic.Value // map[string]ingress.Record
+	resolver     RequestResolver
+	disableIndex bool
+}
+
+// Index page visibility.
+func (rt *Router) Index(enable bool) {
+	rt.disableIndex = !enable
 }
 
 // Domains for all known records.
@@ -53,17 +61,54 @@ func (rt *Router) Set(ctx context.Context, records []ingress.Record) error {
 func (rt *Router) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	routes, ok := rt.routes.Load().(map[string]ingress.Record)
 	if !ok {
-		http.NotFound(writer, request)
+		rt.notFound(writer, request)
 		return
 	}
 	domain := rt.resolver.Domain(request)
 
 	record, ok := routes[domain]
 	if !ok {
-		http.NotFound(writer, request)
+		rt.notFound(writer, request)
 		return
 	}
 	rt.serveRoute(writer, request, record)
+}
+
+func (rt *Router) notFound(writer http.ResponseWriter, request *http.Request) {
+	if rt.disableIndex {
+		http.NotFound(writer, request)
+		return
+	}
+	rt.showIndex(writer, request)
+}
+
+//go:embed index.html
+var templateContent string //nolint:gochecknoglobals
+
+func (rt *Router) showIndex(writer http.ResponseWriter, _ *http.Request) {
+	t, err := template.New("").Funcs(template.FuncMap{
+		"fqdn": rt.resolver.FQDN,
+		"url":  rt.resolver.URL,
+	}).Parse(templateContent)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	routes, _ := rt.routes.Load().(map[string]ingress.Record)
+	var byGroup = make(map[string][]ingress.Record)
+
+	for _, record := range routes {
+		byGroup[record.Group] = append(byGroup[record.Group], record)
+	}
+
+	writer.Header().Set("Content-Type", "text/html")
+	writer.WriteHeader(http.StatusNotFound)
+
+	_ = t.Execute(writer, map[string]interface{}{
+		"ByGroup":  byGroup,
+		"ByDomain": routes,
+	})
 }
 
 func (rt *Router) serveRoute(writer http.ResponseWriter, request *http.Request, record ingress.Record) {

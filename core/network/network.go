@@ -53,7 +53,7 @@ func (dn *DockerNetwork) ID() string {
 func (dn *DockerNetwork) Join(ctx context.Context, containerID string) (alias string, err error) {
 	alias, err = dn.getAlias(ctx, containerID)
 	if err == nil {
-		return
+		return alias, nil
 	}
 	if !errors.Is(err, ErrNotAssigned) {
 		return "", err
@@ -101,7 +101,7 @@ func (dn *DockerNetwork) Resolve(ctx context.Context, address string) (string, e
 
 	for id, cont := range info.Containers {
 		if cont.IPv4Address != "" && (strings.HasPrefix(id, host) || cont.Name == host) {
-			ip := strings.SplitN(cont.IPv4Address, "/", 2)[0]
+			ip := strings.SplitN(cont.IPv4Address, "/", 2)[0] //nolint:gomnd
 			if port != "" {
 				return ip + ":" + port, nil
 			}

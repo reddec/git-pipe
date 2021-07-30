@@ -38,18 +38,6 @@ func Run(ctx context.Context, env *core.Environment) error {
 		return fmt.Errorf("build image: %w", err)
 	}
 
-	// Collect declared mount points
-	var mountPoints = make([]string, 0, len(image.Config.Volumes))
-	for containerPath := range image.Config.Volumes {
-		mountPoints = append(mountPoints, containerPath)
-	}
-
-	// Collect declared ports
-	var ports = make([]int, 0, len(image.Config.ExposedPorts))
-	for port := range image.Config.ExposedPorts {
-		ports = append(ports, port.Int())
-	}
-
 	// We are storing all mount points in a single volume with name equal to repo
 	var volumes = []string{env.Name}
 
@@ -134,7 +122,6 @@ func startContainer(ctx context.Context, api client.APIClient, containerID strin
 
 	info, err := api.ContainerInspect(ctx, containerID)
 	if err != nil {
-
 		return nil, fmt.Errorf("inspect container: %w", err)
 	}
 

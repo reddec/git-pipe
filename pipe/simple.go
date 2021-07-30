@@ -20,6 +20,10 @@ var (
 	errUnknownPackage = errors.New("unknown packaging for repo")
 )
 
+const (
+	defaultPermission = 0700
+)
+
 func Run(ctx context.Context, source remote.Source, env *core.Environment, interval time.Duration) {
 	logger := internal.SubLogger(ctx, env.Name)
 	p := &poller{
@@ -74,7 +78,7 @@ LOOP:
 
 func (poller *poller) poll(ctx context.Context, force bool) error {
 	poller.logger.Debug("polling for updates")
-	if err := os.MkdirAll(poller.env.Directory, 0700); err != nil {
+	if err := os.MkdirAll(poller.env.Directory, defaultPermission); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
 	changed, err := poller.source.Poll(ctx, poller.env.Directory)

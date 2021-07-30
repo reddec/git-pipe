@@ -20,7 +20,7 @@ type Resolver interface {
 // Proxy request to endpoint. Nil resolver disable address resolution.
 func Proxy(resolver Resolver) RouteHandler {
 	return RouteHandlerFunc(func(writer http.ResponseWriter, request *http.Request, record Route) error {
-		address := record.Record.Addresses[rand.Int()%len(record.Record.Addresses)]
+		address := record.Record.Addresses[rand.Int()%len(record.Record.Addresses)] //nolint:gosec
 
 		ctx := request.Context()
 
@@ -36,7 +36,7 @@ func Proxy(resolver Resolver) RouteHandler {
 		logger := internal.LoggerFromContext(ctx).With(zap.String("address", address), zap.String("endpoint", endpoint))
 		logger.Debug("proxy endpoint resolved")
 
-		request.WithContext(internal.WithLogger(ctx, logger))
+		request = request.WithContext(internal.WithLogger(ctx, logger))
 
 		u, err := url.Parse("http://" + endpoint)
 		if err != nil {

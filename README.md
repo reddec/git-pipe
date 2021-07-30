@@ -53,6 +53,12 @@ Wait a bit to finish building and go to
 * http://wordpress.wordpress-docker-compose.localhost:8080 - wordpress app
 * http://phpmyadmin.wordpress-docker-compose.localhost:8080 - for phpmyadmin app
 
+## Automatic UI/dashboard
+
+Index page automatically generated for unknown domain. Ex: http://localhost:8080
+
+![image](https://user-images.githubusercontent.com/6597086/127631968-85a8eaa9-1605-4ca0-ba52-7943da536d1a.png)
+
 
 
 ## Supported OS
@@ -149,14 +155,13 @@ Flow:
 
 * Deploys all services.
 * All ports in `ports` directive will be linked as sub-domains
-* Root compose file supports optional `x-domain` attribute which overrides domain prefix. Default is repo name (or FQDN)
-  .
-* Each service with at least one port supports an optional `x-domain` attribute which overrides sub-domain. Default is
+* Each service with at least one port supports an optional `domainname` attribute which overrides sub-domain. Default is
   service name.
 * First services with attribute `x-root: yes` or with name `www`, `web`, `gateway` will be additionally exposed without
   sub-domain.
 * All exposed ports will be additionally exposed as sub-sub-domain with port name as the name.
 * Volumes automatically backup-ed and restored (see Backup)
+* Root port for service picked by the same rules as for [docker](#docker)
 
 Domains will be generated as> `<port?>.<x-domain|service>.<x-domain|project>.<root-domain>`
 and `<x-domain|project>.<root-domain>` points to `<first x-root: true|www|web|gateway>`
@@ -190,8 +195,8 @@ Generated mapping (root domain (`-d,--domain,$DOMAIN`) is `localhost`):
 * `api.mini.localhost` - points `api` service to internal port `80`
 * `80.api.mini.localhost` - same
 
-Root domain: `mini.localhost` points to `web` service to internal port `80` (the first service with name `web`, first port
-in array)
+Root domain: `mini.localhost` points to `web` service to internal port `80` (the first service with name `web`, first
+port in array)
 
 
 
@@ -199,16 +204,15 @@ in array)
 
 ```yaml
 version: '3'
-x-domain: super
 services:
   web:
-    x-domain: index
+    domainname: index
     image: nginx
     ports:
       - 8080:80
       - 8081:9000
   api:
-    x-domain: echo
+    domainname: echo
     x-root: yes
     image: hashicorp/http-echo
     command: -listen :80 -text "web"
@@ -226,8 +230,8 @@ Generated mapping (root domain (`-d,--domain,$DOMAIN`) is `localhost`):
 * `echo.super.localhost` - points `api` service to internal port `80`
 * `80.echo.super.localhost` - same
 
-Root domain: `super.localhost` points to `api` service to internal port `80` (the first service with `x-root: yes`, first
-port in array)
+Root domain: `super.localhost` points to `api` service to internal port `80` (the first service with `x-root: yes`,
+first port in array)
 
 
 ## Backup

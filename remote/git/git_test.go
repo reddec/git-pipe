@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/reddec/git-pipe/core/remote/git"
+	"github.com/reddec/git-pipe/remote/git"
 
 	"github.com/stretchr/testify/assert"
 )

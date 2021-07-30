@@ -206,6 +206,8 @@ func (eda *ErrDockerAPI) Error() string {
 	return eda.Message
 }
 
+var ErrEventStreamClosed = errors.New("event stream closed")
+
 func WaitToBeHealthy(ctx context.Context, cli client.APIClient, containerID string, created string) error {
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -219,7 +221,7 @@ func WaitToBeHealthy(ctx context.Context, cli client.APIClient, containerID stri
 		select {
 		case event, ok := <-chEvents:
 			if !ok {
-				return errors.New("no event")
+				return ErrEventStreamClosed
 			}
 			if event.Status == "health_status: healthy" {
 				return nil

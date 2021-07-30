@@ -68,13 +68,6 @@ type Router struct {
 	JWT         string `long:"jwt" env:"JWT" description:"Define JWT secret and enable JWT-based authorization"`
 }
 
-func (rt Router) domain() string {
-	if rt.PathRouting {
-		return ""
-	}
-	return rt.Domain
-}
-
 func (cmd *CommandRun) Execute([]string) error {
 	if cmd.Router.Domain == "" {
 		name, err := os.Hostname()
@@ -141,6 +134,7 @@ func (cmd *CommandRun) Execute([]string) error {
 		}
 		chain = append(chain, embedded.Proxy(dockerNetwork))
 		router = embedded.New(resolver, chain...)
+		router.Index(!cmd.Router.NoIndex)
 		ingressImpl = ingress.New(router)
 	}
 

@@ -14,7 +14,6 @@ func (em *Emitter) Ready() {
 	select {
 	case em.ready <- struct{}{}:
 	default:
-
 	}
 }
 

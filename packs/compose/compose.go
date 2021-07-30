@@ -174,7 +174,7 @@ func Run(ctx context.Context, env *core.Environment) error {
 		domain := domainName(env.Name, any(serviceContainers.Service.DomainName, serviceContainers.Service.Name))
 		domainsByPort := make(map[int]string)
 		for i, port := range ports {
-			serviceDomain := domainName(domain, strconv.FormatUint(uint64(port.Target), 10))
+			serviceDomain := domainName(domain, strconv.FormatUint(uint64(port.Target), 10)) //nolint:gomnd
 			exposedLinks[serviceDomain] = mapLinks(links, port.Target)
 
 			if i == 0 {
@@ -216,7 +216,7 @@ func Run(ctx context.Context, env *core.Environment) error {
 	defer env.Ingress.Clear(context.Background(), env.Name)
 
 	// Register in DNS
-	var domains []string
+	var domains = make([]string, 0, len(exposedLinks))
 	for domain := range exposedLinks {
 		domains = append(domains, domain)
 	}
@@ -240,7 +240,7 @@ type serviceContainers struct {
 
 func mapLinks(links []string, port uint32) []string {
 	var list = make([]string, 0, len(links))
-	containerPort := strconv.FormatUint(uint64(port), 10)
+	containerPort := strconv.FormatUint(uint64(port), 10) //nolint:gomnd
 
 	for _, link := range links {
 		list = append(list, link+":"+containerPort)
@@ -313,10 +313,6 @@ func domainName(root string, name string) string {
 		return name + "." + root
 	}
 	return root
-}
-
-func volumeName(root string, volume string) string {
-	return root + "_" + volume
 }
 
 func readComposeFile(dir string, names ...string) (string, []byte, error) {

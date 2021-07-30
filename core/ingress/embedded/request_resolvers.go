@@ -12,6 +12,8 @@ type RequestResolver interface {
 	FQDN(domain string) string
 	// Domain name from request.
 	Domain(req *http.Request) string
+	// URL by short domain.
+	URL(domain string) string
 }
 
 // ByDomain resolves request domain based on requested host.
@@ -44,6 +46,10 @@ func (dr *domainResolver) Domain(request *http.Request) string {
 	return domain
 }
 
+func (dr *domainResolver) URL(domain string) string {
+	return "//" + domain
+}
+
 // ByPath resolve request domain as a first segment in request URL path.
 // It modifies request URL in case of successful resolution.
 func ByPath() RequestResolver {
@@ -64,4 +70,8 @@ func (pr *pathResolver) Domain(request *http.Request) string {
 		}
 	}
 	return ""
+}
+
+func (pr *pathResolver) URL(domain string) string {
+	return domain
 }
